@@ -1,0 +1,272 @@
+{
+  "1513": {
+    "ticker": "1513",
+    "consecutiveDays": 4,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "1519": {
+    "ticker": "1519",
+    "consecutiveDays": 14,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2301": {
+    "ticker": "2301",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2303": {
+    "ticker": "2303",
+    "consecutiveDays": 6,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "2308": {
+    "ticker": "2308",
+    "consecutiveDays": 6,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "2317": {
+    "ticker": "2317",
+    "consecutiveDays": 19,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "2330": {
+    "ticker": "2330",
+    "consecutiveDays": 20,
+    "watchlistCategory": "核心觀察股",
+    "watchlistCategoryEn": "Core Watchlist"
+  },
+  "2337": {
+    "ticker": "2337",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2368": {
+    "ticker": "2368",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2382": {
+    "ticker": "2382",
+    "consecutiveDays": 18,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2383": {
+    "ticker": "2383",
+    "consecutiveDays": 32,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2449": {
+    "ticker": "2449",
+    "consecutiveDays": 14,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2454": {
+    "ticker": "2454",
+    "consecutiveDays": 6,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "2603": {
+    "ticker": "2603",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "2881": {
+    "ticker": "2881",
+    "consecutiveDays": 6,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "2882": {
+    "ticker": "2882",
+    "consecutiveDays": 6,
+    "watchlistCategory": "今日突破",
+    "watchlistCategoryEn": "Breakout Today"
+  },
+  "3008": {
+    "ticker": "3008",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3017": {
+    "ticker": "3017",
+    "consecutiveDays": 17,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3037": {
+    "ticker": "3037",
+    "consecutiveDays": 15,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "3231": {
+    "ticker": "3231",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3324": {
+    "ticker": "3324",
+    "consecutiveDays": 20,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3481": {
+    "ticker": "3481",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3653": {
+    "ticker": "3653",
+    "consecutiveDays": 28,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "3711": {
+    "ticker": "3711",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "6415": {
+    "ticker": "6415",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "6669": {
+    "ticker": "6669",
+    "consecutiveDays": 24,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "8046": {
+    "ticker": "8046",
+    "consecutiveDays": 6,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "NVDA": {
+    "ticker": "NVDA",
+    "consecutiveDays": 34,
+    "watchlistCategory": "核心觀察股",
+    "watchlistCategoryEn": "Core Watchlist"
+  },
+  "MSFT": {
+    "ticker": "MSFT",
+    "consecutiveDays": 23,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "AAPL": {
+    "ticker": "AAPL",
+    "consecutiveDays": 16,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "PLTR": {
+    "ticker": "PLTR",
+    "consecutiveDays": 25,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "LLY": {
+    "ticker": "LLY",
+    "consecutiveDays": 25,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "AVGO": {
+    "ticker": "AVGO",
+    "consecutiveDays": 22,
+    "watchlistCategory": "今日突破",
+    "watchlistCategoryEn": "Breakout Today"
+  },
+  "NET": {
+    "ticker": "NET",
+    "consecutiveDays": 17,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "MSTR": {
+    "ticker": "MSTR",
+    "consecutiveDays": 20,
+    "watchlistCategory": "核心觀察股",
+    "watchlistCategoryEn": "Core Watchlist"
+  },
+  "TSLA": {
+    "ticker": "TSLA",
+    "consecutiveDays": 1,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "AMD": {
+    "ticker": "AMD",
+    "consecutiveDays": 6,
+    "watchlistCategory": "接近買點",
+    "watchlistCategoryEn": "Near Pivot"
+  },
+  "META": {
+    "ticker": "META",
+    "consecutiveDays": 4,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "AMZN": {
+    "ticker": "AMZN",
+    "consecutiveDays": 1,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "NFLX": {
+    "ticker": "NFLX",
+    "consecutiveDays": 3,
+    "watchlistCategory": "接近買點",
+    "watchlistCategoryEn": "Near Pivot"
+  },
+  "COIN": {
+    "ticker": "COIN",
+    "consecutiveDays": 2,
+    "watchlistCategory": "接近買點",
+    "watchlistCategoryEn": "Near Pivot"
+  },
+  "SMCI": {
+    "ticker": "SMCI",
+    "consecutiveDays": 3,
+    "watchlistCategory": "失敗型態",
+    "watchlistCategoryEn": "Failed Setup"
+  },
+  "CRWD": {
+    "ticker": "CRWD",
+    "consecutiveDays": 4,
+    "watchlistCategory": "過度延伸",
+    "watchlistCategoryEn": "Extended"
+  },
+  "SMH": {
+    "ticker": "SMH",
+    "consecutiveDays": 2,
+    "watchlistCategory": "接近買點",
+    "watchlistCategoryEn": "Near Pivot"
+  },
+  "CELH": {
+    "ticker": "CELH",
+    "consecutiveDays": 1,
+    "watchlistCategory": "接近買點",
+    "watchlistCategoryEn": "Near Pivot"
+  }
+}
