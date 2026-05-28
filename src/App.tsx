@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   TrendingUp,
   Search,
@@ -135,15 +135,21 @@ export default function App() {
         const result = await DataProvider.loadFromAPI(isForced, weights);
         if (active) {
           const tw = DataProvider.getTwStocks(weights);
+          const us = DataProvider.getUsStocks(weights);
           setTwStocks(tw);
-          setUsStocks(DataProvider.getUsStocks(weights));
+          setUsStocks(us);
           setLastUpdated(DataProvider.getLastUpdated());
           setPoolCount(DataProvider.getStockPoolCount());
           setSyncMessage(result.message || null);
           setRefreshing(result.isSyncing);
 
-          if (tw.length > 0 && !selectedTicker) {
-            setSelectedTicker(tw[0].ticker);
+          // Only set default ticker ONCE if nothing is selected
+          if (!selectedTicker && !hasInitialized.current) {
+            const first = tw[0] || us[0];
+            if (first) {
+              setSelectedTicker(first.ticker);
+              hasInitialized.current = true;
+            }
           }
           setError(null);
         }
@@ -212,26 +218,46 @@ export default function App() {
     }
   };
 
+  const prevActiveStock = useRef<StockAnalysis | null>(null);
+  const hasInitialized = useRef(false);
+
   // Get active stock for details tab
   const activeStock = useMemo(() => {
-    if (!selectedTicker) return twStocks[0] || usStocks[0];
+    if (!selectedTicker) {
+      if (prevActiveStock.current) return prevActiveStock.current;
+      const defaultStock = twStocks[0] || usStocks[0];
+      if (defaultStock) prevActiveStock.current = defaultStock;
+      return defaultStock;
+    }
 
-    // Priority: Search in local state first (most up-to-date)
-    const localMatch = [...twStocks, ...usStocks].find(s => 
-      s.ticker.toUpperCase() === selectedTicker.toUpperCase() || 
-      s.ticker.split(".")[0].toUpperCase() === selectedTicker.toUpperCase()
+    const normalizedSelected = selectedTicker.toUpperCase();
+    const cleanSelected = normalizedSelected.split(".")[0];
+
+    // Priority 1: Exact match in current state
+    let match = [...twStocks, ...usStocks].find(s => 
+      s.ticker.toUpperCase() === normalizedSelected || 
+      s.ticker.split(".")[0].toUpperCase() === cleanSelected
     );
-    if (localMatch) return localMatch;
     
-    // Fallback search in DataProvider
-    const providerMatch = DataProvider.getStockByTicker(selectedTicker);
-    if (providerMatch) return providerMatch;
+    // Priority 2: Fallback to DataProvider cache
+    if (!match) {
+      match = DataProvider.getStockByTicker(selectedTicker);
+    }
 
-    // Last resort fallback: If we HAVE a selected ticker, don't jump to index 0. 
-    // Jumping causes UX frustration during background syncs.
-    if (selectedTicker) return localMatch || providerMatch || twStocks[0] || usStocks[0];
+    // Priority 3: Persistence - If we had a stock with this ticker before, keep it
+    if (!match && prevActiveStock.current) {
+      const prev = prevActiveStock.current;
+      if (prev.ticker.toUpperCase() === normalizedSelected || 
+          prev.ticker.split(".")[0].toUpperCase() === cleanSelected) {
+        match = prev;
+      }
+    }
+
+    if (match) {
+      prevActiveStock.current = match;
+    }
     
-    return twStocks[0] || usStocks[0];
+    return match || null;
   }, [selectedTicker, twStocks, usStocks]);
 
   const tsmcStock = useMemo(() => {
@@ -341,7 +367,10 @@ export default function App() {
     // Apply adjustable dynamic liquidity parameters (especially for Taiwan stocks as requested)
     if (isTw) {
       result = result.filter((s) => {
-        // 1. 最低股價 (minPrice)
+        // 1. RS Ranking - Strict SEPA requirement
+        if (s.rsRanking < 70) return false;
+
+        // 2. 最低股價 (minPrice)
         if (s.lastClose < liquidityParams.minPrice) return false;
 
         // 2. 最低日成交金額 (minTurnover = lastClose * volume)
@@ -992,8 +1021,6 @@ export default function App() {
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
                         </th>
                         <th className="py-2 px-2 text-center">趨勢驗證</th>
-                        <th className="py-2 px-2 text-center">Pivot 建立日期</th>
-                        <th className="py-2 px-2 text-center text-emerald-400">Pivot 狀態</th>
                         <th className="py-2 px-2 text-right text-emerald-300">建議 Pivot</th>
                         <th className="py-2 px-2">型態判斷</th>
                         <th className="py-2 px-2 text-right text-[10px]">停損(風險%)</th>
@@ -1053,19 +1080,6 @@ export default function App() {
                                     FAIL
                                   </span>
                                 )}
-                              </td>
-                              <td className="py-1.5 px-2 text-center font-mono text-[9px] text-gray-400">
-                                {stock.pivotCreationDate || "--"}
-                              </td>
-                              <td className="py-1.5 px-2 text-center">
-                                <span className={`px-1 py-0.2 rounded-[3px] text-[8px] font-bold ${
-                                  stock.pivotStatus === "Fixed" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" :
-                                  stock.pivotStatus === "Breakout" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" :
-                                  "bg-slate-800 text-gray-400"
-                                }`}>
-                                  {stock.pivotStatus === "Fixed" ? "已鎖定" : 
-                                   stock.pivotStatus === "Breakout" ? "已突破" : "計算中"}
-                                </span>
                               </td>
                               <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-400">
                                 {stock.buyPoint}
@@ -1839,13 +1853,29 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     
                     {/* Pivot point config */}
-                    <div className="bg-black/30 p-4 rounded-xl border border-slate-800 space-y-1.5 relative overflow-hidden">
+                    <div className="bg-black/30 p-4 rounded-xl border border-slate-800 space-y-2 relative overflow-hidden">
                       <div className="absolute right-2 top-2 p-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 text-[9px] font-black leading-none uppercase select-none font-bold">PIVOT LIMIT</div>
                       <span className="text-[10px] text-gray-500 font-bold tracking-wider leading-none uppercase">Pivot 突破買點預設</span>
                       <div className="font-mono text-2xl font-black text-gray-100">
                         {activeStock.country === "US" ? "$" : ""}{activeStock.buyPoint}
                       </div>
-                      <p className="text-[10px] text-gray-500 leading-snug">
+
+                      <div className="flex flex-col gap-1 mt-1 border-t border-slate-800/50 pt-2">
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="text-gray-500">Pivot 建立日期:</span>
+                          <span className="font-mono text-indigo-400 font-bold">{activeStock.pivotCreationDate || "N/A"}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="text-gray-500">當前 Pivot 狀態:</span>
+                          <span className={`font-bold ${
+                            activeStock.statusEn === "Breakout" ? "text-amber-500" :
+                            activeStock.statusEn === "Near Pivot" ? "text-emerald-400" :
+                            "text-gray-300"
+                          }`}>{activeStock.status}</span>
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-gray-500 leading-snug mt-2">
                         強勢股突破橫盤整理與浮額洗乾淨後的最高價位 (合理進場區限制在突破點 +5% 內)。
                       </p>
                     </div>

@@ -562,8 +562,8 @@ function computeStockAnalysis(
   const targetPrice2 = Math.round(buyPoint * (1 + (riskPercent * 3) / 100) * 100) / 100;
   const pctToBuyPoint = Math.round(((buyPoint - lastClose) / lastClose) * 10000) / 100;
   
-  const trendPoints = Math.round((trendCount / 8) * 35); // Max 35
-  const rsPoints = Math.round((rsRanking / 100) * 25);    // Max 25
+  const trendPoints = Math.round((trendCount / 8) * 40); // Max 40
+  const rsPoints = Math.round((rsRanking / 100) * 20);    // Max 20
   
   let vcpPoints = 0;
   if (profile === "vcp-tight") vcpPoints = 20;
@@ -586,26 +586,28 @@ function computeStockAnalysis(
   else if (profile === "forming-vcp") valPoints = 5;
   else valPoints = 0;
   
-  // Bonus points for tightness and risk/reward
-  let bonus = 0;
-  if (pctToBuyPoint < 2 && profile === "vcp-tight") bonus = 5;
-  if (riskPercent < 6) bonus += 5;
-  
   // Penalties
   let penalty = 0;
-  if (profile === 'overextended') penalty = 30; // Significant penalty for overextended
-  if (profile === 'downtrend') penalty = 50;
-  if (lastClose < ma200 && ma200) penalty += 20;
-
-  const total = Math.max(10, Math.min(100, trendPoints + rsPoints + vcpPoints + volPoints + valPoints + bonus - penalty));
+  if (profile === 'overextended') penalty = 20; 
+  if (profile === 'downtrend') penalty = 60;
+  if (lastClose < ma200 && ma200) penalty += 25;
   
-  // SEPA Hard Caps: Non-compliant or Overextended stocks should NOT have high scores
-  let finalTotal = total;
-  if (statusEn === "Overextended") finalTotal = Math.min(65, total);
-  if (statusEn === "Non-compliant") finalTotal = Math.min(35, total);
+  // Strict: If Trend Template fails, it cannot have a high score
+  if (!passed) {
+    penalty += 35;
+  }
+  
+  // Strict: Low RS (Laggard) further penalty
+  if (rsRanking < 40) {
+    penalty += 15;
+  } else if (rsRanking < 70) {
+    penalty += 5;
+  }
+
+  const total = Math.max(10, Math.min(100, trendPoints + rsPoints + vcpPoints + volPoints + valPoints - penalty));
   
   const sepaScore = {
-    total: finalTotal,
+    total,
     trendTemplate: trendPoints,
     rsStrength: rsPoints,
     vcpPattern: vcpPoints,
@@ -1284,9 +1286,21 @@ async function performMarketSync(): Promise<boolean> {
       // but still show ranking among them. 
       const rawRs = Math.floor((rankIndex / Math.max(1, currentRSKeys.length)) * 99) + 1;
       const isPriorityOnly = currentRSKeys.length < 50;
-      const rs = isPriorityOnly ? Math.min(92, rawRs) : rawRs;
       
       const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
+      
+      // Fix: If in priority phase, don't let RS drop to 1 if we have a previous high RS
+      // This prevents visual flickering where leaders like 2330/2317 show RS 1/15 during background syncs
+      let rs = rawRs;
+      if (isPriorityOnly) {
+        if (prev && prev.rsRanking > 70) {
+          // If was previously a leader, keep it high in intermediate phase
+          rs = Math.max(prev.rsRanking - 5, rawRs); 
+        } else {
+          rs = Math.min(85, rawRs);
+        }
+      }
+      
       const analyzed = computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, rs, s.industry, undefined, prev);
       if (analyzed) {
          const tracker = watchlistTrackerRegistry[analyzed.ticker] || { ticker: analyzed.ticker, consecutiveDays: 0 };

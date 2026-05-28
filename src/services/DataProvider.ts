@@ -89,26 +89,25 @@ export class DataProvider {
     const rawSepa = stock.sepaScore;
     const weights = this.weights;
 
-    // Normalize elements with custom weights
-    const trendWeightRatio = weights.trendTemplate / 40;
-    const rsWeightRatio = weights.rsStrength / 20;
-    const vcpWeightRatio = weights.vcpPattern / 20;
-    const volWeightRatio = weights.volumeDryUp / 10;
-    const rrWeightRatio = weights.riskReward / 10;
+    // Normalize elements with custom weights and strictly cap them
+    const weightedTrend = Math.min(weights.trendTemplate, (rawSepa.trendTemplate || 0) * (weights.trendTemplate / 40));
+    const weightedRS = Math.min(weights.rsStrength, (rawSepa.rsStrength || 0) * (weights.rsStrength / 20));
+    const weightedVCP = Math.min(weights.vcpPattern, (rawSepa.vcpPattern || 0) * (weights.vcpPattern / 20));
+    const weightedVol = Math.min(weights.volumeDryUp, (rawSepa.volumeDryUp || 0) * (weights.volumeDryUp / 10));
+    const weightedRR = Math.min(weights.riskReward, (rawSepa.riskReward || 0) * (weights.riskReward / 10));
 
-    const weightedTrend = (rawSepa.trendTemplate || 0) * trendWeightRatio;
-    const weightedRS = (rawSepa.rsStrength || 0) * rsWeightRatio;
-    const weightedVCP = (rawSepa.vcpPattern || 0) * vcpWeightRatio;
-    const weightedVol = (rawSepa.volumeDryUp || 0) * volWeightRatio;
-    const weightedRR = (rawSepa.riskReward || 0) * rrWeightRatio;
-
-    const total = Math.max(10, Math.min(100, Math.round(
+    const totalValue = Math.max(10, Math.min(100, Math.round(
       weightedTrend + weightedRS + weightedVCP + weightedVol + weightedRR
     ) - (rawSepa.penalty || 0)));
 
     stock.sepaScore = {
       ...rawSepa,
-      total,
+      trendTemplate: Math.round(weightedTrend),
+      rsStrength: Math.round(weightedRS),
+      vcpPattern: Math.round(weightedVCP),
+      volumeDryUp: Math.round(weightedVol),
+      riskReward: Math.round(weightedRR),
+      total: totalValue,
     };
 
     return stock;
