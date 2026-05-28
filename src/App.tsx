@@ -70,6 +70,7 @@ export default function App() {
   const [selectedTicker, setSelectedTicker] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [selectedWatchCategory, setSelectedWatchCategory] = useState<string>("ALL");
+  const [watchMarketFilter, setWatchMarketFilter] = useState<"ALL" | "TW" | "US">("ALL");
   const [weights, setWeights] = useState<SepaWeights>(DEFAULT_WEIGHTS);
   
   // Weights adjustment transient UI state
@@ -501,11 +502,20 @@ export default function App() {
   }, [twStocks, usStocks]);
 
   const filteredWatchlist = useMemo(() => {
-    if (selectedWatchCategory === "ALL") {
-      return combinedWatchlist;
+    let list = [...combinedWatchlist];
+    
+    // Market filter logic
+    if (watchMarketFilter !== "ALL") {
+      list = list.filter(stock => {
+        return watchMarketFilter === "TW" ? stock.country === "TW" : stock.country === "US";
+      });
     }
-    return combinedWatchlist.filter(s => s.watchlistCategory === selectedWatchCategory);
-  }, [combinedWatchlist, selectedWatchCategory]);
+
+    if (selectedWatchCategory === "ALL") {
+      return list;
+    }
+    return list.filter(s => s.watchlistCategory === selectedWatchCategory);
+  }, [combinedWatchlist, selectedWatchCategory, watchMarketFilter]);
 
   const sortedWatchlist = useMemo(() => {
     return [...filteredWatchlist].sort((a, b) => {
@@ -1195,21 +1205,61 @@ export default function App() {
 
           {/* TAB 2: AMERICAN STOCK SEPA TOP 20 */}
           {activeTab === "us" && (
-            <div className="space-y-4 flex-1 flex flex-col" id="us-tab">
-
-              {/* Header Title segment */}
-              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-slate-850 pb-3">
-                <div className="space-y-0.5">
-                  <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
-                    <Globe2 className="w-5 h-5 text-indigo-400" />
-                    US Stock SEPA Top 20 Leaders (美股)
-                  </h2>
-                  <p className="text-xs text-gray-400">Automatic scanner monitoring NYSE, Nasdaq and AMEX stocks pool based on SEPA & Trend Template formula criteria.</p>
+            <div className="space-y-6 flex-1 flex flex-col" id="us-tab">
+              
+              {/* 1. US Market Top 20 Dashboard Header */}
+              <div className="flex flex-wrap items-center justify-between gap-4 bg-[#161B22]/40 p-4 rounded-xl border border-[#30363D]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center border border-indigo-500/20">
+                    <Award className="w-6 h-6 text-indigo-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
+                      US Market SEPA 領先群 <span className="text-[10px] bg-indigo-500 text-white px-1.5 rounded-sm font-mono mt-0.5">TOP 20</span>
+                    </h2>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-gray-500">當前篩選強度: {usFilters.minScore} 分以上</span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700"></span>
+                      <span className="text-[11px] text-indigo-400 font-mono">母體池掃描個股: {DataProvider.getUsStocks(weights).length} 檔</span>
+                    </div>
+                  </div>
                 </div>
-                
-                <div className="flex flex-wrap gap-1.5 text-[10px] text-gray-400/90 font-medium">
-                  <span className="px-2 py-0.5 bg-slate-950 border border-[#30363D] rounded-md font-semibold">NASDAQ / NYSE / AMEX</span>
-                  <span className="px-2 py-0.5 bg-slate-950 border border-[#30363D] rounded-md font-semibold font-mono">RS Ranking &ge; 70</span>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-500 font-bold uppercase mr-2 font-mono">Sorting By:</span>
+                  <div className="flex bg-black/30 p-1 rounded-lg border border-slate-800">
+                    <button 
+                      onClick={() => handleThSort("us", "sepaScoreTotal")}
+                      className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${usFilters.sortField === "sepaScoreTotal" ? "bg-indigo-600 text-white" : "text-gray-500 hover:text-white"}`}
+                    >
+                      SEPA 總分
+                    </button>
+                    <button 
+                      onClick={() => handleThSort("us", "rsRanking")}
+                      className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${usFilters.sortField === "rsRanking" ? "bg-indigo-600 text-white" : "text-gray-500 hover:text-white"}`}
+                    >
+                      RS 強度
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Status Summary Bar */}
+              <div className="bg-indigo-950/15 border border-indigo-900/40 p-4 rounded-xl space-y-2">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                    </span>
+                    <span className="font-bold text-gray-200">US Market Filters Active:</span>
+                    <span className="text-gray-400 text-xs"> NASDAQ/NYSE Universe</span>
+                    <span className="text-gray-600 font-mono">|</span>
+                    <span className="text-gray-400 text-xs">RS Ranking &ge; 70</span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-mono italic shrink-0">
+                    US Feed: Delayed 15min / Daily Bars
+                  </div>
                 </div>
               </div>
 
@@ -1360,14 +1410,39 @@ export default function App() {
                 <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
                   <ClipboardList className="w-40 h-40 text-violet-400" />
                 </div>
-                <div className="max-w-3xl space-y-2">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-400/30 text-indigo-400 mb-1">
-                    <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-                    <span>SEPA 趨勢觀察池</span>
+                <div className="max-w-3xl space-y-2 flex flex-col">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-400/30 text-indigo-400 w-fit">
+                        <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
+                        <span>SEPA 趨勢觀察池</span>
+                      </div>
+                      <h1 className="text-2xl font-black text-white tracking-tight sm:text-3xl">
+                        SEPA 強勢龍頭持續追蹤系統
+                      </h1>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 bg-black/40 p-1.5 rounded-xl border border-slate-700/50">
+                      <button 
+                        onClick={() => setWatchMarketFilter("ALL")}
+                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${watchMarketFilter === "ALL" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-gray-500 hover:text-white"}`}
+                      >
+                        ALL 全部
+                      </button>
+                      <button 
+                        onClick={() => setWatchMarketFilter("TW")}
+                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${watchMarketFilter === "TW" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-gray-500 hover:text-white"}`}
+                      >
+                        TW 台股
+                      </button>
+                      <button 
+                        onClick={() => setWatchMarketFilter("US")}
+                        className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${watchMarketFilter === "US" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-gray-500 hover:text-white"}`}
+                      >
+                        US 美股
+                      </button>
+                    </div>
                   </div>
-                  <h1 className="text-2xl font-black text-white tracking-tight sm:text-3xl">
-                    SEPA 強勢龍頭持續追蹤系統
-                  </h1>
                   <p className="text-sm text-gray-300 leading-relaxed max-w-xl">
                     本池採用 Mark Minervini 強勢股第二階段追蹤機制，<strong>不因單日排名波動而將潛力龍頭立刻刪除</strong>。
                     本系統動態監測大勢與個股連續符合天數，並即時按市場地位與型態變化將其分類，為其量身打造起跑樞紐。

@@ -1261,7 +1261,7 @@ async function performMarketSync(): Promise<boolean> {
   // 4. Scan US Stocks first (usually faster as it's a smaller universe)
   console.log(`[Market Sync] Scanning ${usUniverse.length} US momentum stocks...`);
   for (const item of usUniverse) {
-    const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+    const { klines } = await fetchStockKLines(item.ticker, false, item.name);
     // Add small delay to avoid rate limit
     await new Promise(resolve => setTimeout(resolve, 300));
     
