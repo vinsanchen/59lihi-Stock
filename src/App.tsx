@@ -214,6 +214,14 @@ export default function App() {
 
   // Get active stock for details tab
   const activeStock = useMemo(() => {
+    // Priority: Search in local state first (most up-to-date)
+    const localMatch = [...twStocks, ...usStocks].find(s => 
+      s.ticker.toUpperCase() === selectedTicker.toUpperCase() || 
+      s.ticker.split(".")[0].toUpperCase() === selectedTicker.toUpperCase()
+    );
+    if (localMatch) return localMatch;
+    
+    // Fallback: DataProvider static cache
     return DataProvider.getStockByTicker(selectedTicker) || twStocks[0] || usStocks[0];
   }, [selectedTicker, twStocks, usStocks]);
 
@@ -975,8 +983,10 @@ export default function App() {
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
                         </th>
                         <th className="py-2 px-2 text-center">趨勢驗證</th>
+                        <th className="py-2 px-2 text-center">Pivot 建立日期</th>
+                        <th className="py-2 px-2 text-center text-emerald-400">Pivot 狀態</th>
+                        <th className="py-2 px-2 text-right text-emerald-300">建議 Pivot</th>
                         <th className="py-2 px-2">型態判斷</th>
-                        <th className="py-2 px-2 text-right">建議買點</th>
                         <th className="py-2 px-2 text-right text-[10px]">停損(風險%)</th>
                         <th className="py-2 px-3 text-center">狀態</th>
                       </tr>
@@ -1035,11 +1045,24 @@ export default function App() {
                                   </span>
                                 )}
                               </td>
-                              <td className="py-1.5 px-2 text-gray-300 font-medium">
-                                <span className="font-semibold text-indigo-300 text-[11px]">{stock.pattern}</span>
+                              <td className="py-1.5 px-2 text-center font-mono text-[9px] text-gray-400">
+                                {stock.pivotCreationDate || "--"}
+                              </td>
+                              <td className="py-1.5 px-2 text-center">
+                                <span className={`px-1 py-0.2 rounded-[3px] text-[8px] font-bold ${
+                                  stock.pivotStatus === "Fixed" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" :
+                                  stock.pivotStatus === "Breakout" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" :
+                                  "bg-slate-800 text-gray-400"
+                                }`}>
+                                  {stock.pivotStatus === "Fixed" ? "已鎖定" : 
+                                   stock.pivotStatus === "Breakout" ? "已突破" : "計算中"}
+                                </span>
                               </td>
                               <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-400">
                                 {stock.buyPoint}
+                              </td>
+                              <td className="py-1.5 px-2 text-gray-300 font-medium">
+                                <span className="font-semibold text-indigo-300 text-[11px]">{stock.pattern}</span>
                               </td>
                               <td className="py-1.5 px-2 text-right font-mono text-gray-400">
                                 <span className="text-rose-400 font-bold">{stock.stopLoss}</span>
@@ -1490,9 +1513,12 @@ export default function App() {
                         <th className="py-2 px-2 text-right">單日漲跌</th>
                         <th className="py-2 px-3 text-center">持續入選天數</th>
                         <th className="py-2 px-2 text-center">觀察分類</th>
+                        <th className="py-2 px-2 text-center">Pivot 建立日期</th>
+                        <th className="py-2 px-2 text-center">Pivot 狀態</th>
+                        <th className="py-2 px-2 text-right text-emerald-300">建議 Pivot</th>
+                        <th className="py-2 px-2 text-right text-gray-500">原始 Pivot</th>
                         <th className="py-2 px-2 text-center">SEPA 總分</th>
                         <th className="py-2 px-2">當前收斂型態</th>
-                        <th className="py-2 px-2 text-right">建議 Pivot</th>
                         <th className="py-2 px-2 text-right">距離買點</th>
                         <th className="py-2 px-3 text-center">操作診斷</th>
                       </tr>
@@ -1500,7 +1526,7 @@ export default function App() {
                     <tbody className="divide-y divide-[#30363D]/60 pb-16 whitespace-nowrap">
                       {sortedWatchlist.length === 0 ? (
                         <tr>
-                          <td colSpan={13} className="py-16 text-center text-gray-500 font-sans">
+                          <td colSpan={16} className="py-16 text-center text-gray-500 font-sans">
                             <AlertTriangle className="w-8 h-8 mx-auto text-amber-500 mb-2 opacity-50" />
                             目前本篩選分組下暫無符合的觀察個股標的。
                           </td>
@@ -1585,6 +1611,27 @@ export default function App() {
                                 </span>
                               </td>
 
+                              {/* Pivot Metadata */}
+                              <td className="py-1.5 px-2 text-center font-mono text-[10px] text-gray-400">
+                                {stock.pivotCreationDate || "--"}
+                              </td>
+                              <td className="py-1.5 px-2 text-center">
+                                <span className={`px-1 py-0.2 rounded-[3px] text-[9px] font-bold ${
+                                  stock.pivotStatus === "Fixed" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" :
+                                  stock.pivotStatus === "Breakout" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" :
+                                  "bg-slate-800 text-gray-400"
+                                }`}>
+                                  {stock.pivotStatus === "Fixed" ? "已鎖定" : 
+                                   stock.pivotStatus === "Breakout" ? "已突破" : "計算中"}
+                                </span>
+                              </td>
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-100 font-bold">
+                                {stock.country === "TW" ? `${stock.buyPoint} 元` : `$${stock.buyPoint}`}
+                              </td>
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-500 text-[10px]">
+                                {stock.originalPivot ? (stock.country === "TW" ? `${stock.originalPivot} 元` : `$${stock.originalPivot}`) : "--"}
+                              </td>
+
                               {/* SEPA aggregate score */}
                               <td className="py-1.5 px-2 text-center text-[11px]">
                                 <span className="text-gray-100 font-mono font-bold bg-slate-950 border border-slate-700 px-1.5 rounded">
@@ -1598,11 +1645,6 @@ export default function App() {
                                 <div className="text-[9px] text-gray-500 truncate max-w-[150px] leading-tight" title={stock.vcpPhaseDesc}>
                                   {stock.vcpPhaseDesc}
                                 </div>
-                              </td>
-
-                              {/* Pivot Suggestions */}
-                              <td className="py-1.5 px-2 text-right font-mono text-gray-300 font-semibold">
-                                {stock.country === "TW" ? `${stock.buyPoint} 元` : `$${stock.buyPoint}`}
                               </td>
 
                               {/* Distance percentage from pivot buy points */}

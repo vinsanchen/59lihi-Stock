@@ -195,52 +195,35 @@ function determineDynamicWatchlistCategory(stock: any, consecutiveDays: number):
 } {
   const lastClose = stock.lastClose;
   const buyPoint = stock.buyPoint;
-  const stopLoss = stock.stopLoss;
-  const ma50Value = stock.trendTemplate?.closeAbove50MA ? stock.lastClose * 0.95 : stock.lastClose * 1.05;
 
-  // 5. 失敗型態: 跌破停損, 跌破 50MA, 跌破 Pivot
-  const isBelowStopLoss = lastClose < stopLoss;
-  const isBelow50MA = stock.sepaScore?.trendTemplate < 15 || (!stock.trendTemplate?.closeAbove50MA);
-  const isBelowPivot = lastClose < buyPoint * 0.95;
-
-  const isFailed = isBelowStopLoss || isBelow50MA || isBelowPivot;
-  if (isFailed) {
-    return { cat: "失敗型態", catEn: "Failed Setup" };
+  // 1. 今日突破 (Breakout Today)
+  if (stock.statusEn === 'Breakout') {
+     return { cat: "今日突破", catEn: "Breakout Today" };
   }
 
-  // 3. 今日突破 (Breakout Today): 今日正式突破 Pivot, 且成交量放大
-  const isBreakout = stock.pattern.includes("突破") || (lastClose >= buyPoint && lastClose <= buyPoint * 1.05 && stock.volume > stock.avgVolume20 * 1.25);
-  if (isBreakout) {
-    return { cat: "今日突破", catEn: "Breakout Today" };
+  // 2. 接近買點 (Near Pivot)
+  if (stock.statusEn === 'Near Pivot') {
+     return { cat: "接近買點", catEn: "Near Pivot" };
   }
 
-  // 4. 過度延伸 (Extended): 已離 Pivot 過遠 (+5% 以上), 不建議追價
-  const isExtended = lastClose > buyPoint * 1.05 || stock.pattern.includes("超買") || stock.pattern.includes("延伸");
-  if (isExtended) {
-    return { cat: "過度延伸", catEn: "Extended" };
+  // 3. 失敗型態 (Failed Setup)
+  if (stock.statusEn === 'Non-compliant') {
+     return { cat: "失敗型態", catEn: "Failed Setup" };
   }
 
-  // 1. 核心觀察股 (Core Watchlist): 最近持續符合 SEPA 條件
-  const isCore = consecutiveDays >= 3 && stock.rsRanking >= 80 && stock.trendTemplate?.passed;
-  if (isCore) {
-    return { cat: "核心觀察股", catEn: "Core Watchlist" };
+  // 4. 過度延伸 (Extended)
+  if (stock.statusEn === 'Overextended') {
+     return { cat: "過度延伸", catEn: "Extended" };
   }
-  
-  // 1b. 一般追蹤 (RS 領跑但天數不足)
-  if (stock.rsRanking >= 90 && stock.trendTemplate?.passed) {
+
+  // 5. 核心觀察股 (Core Watchlist)
+  if (consecutiveDays >= 2 || (stock.rsRanking >= 80 && stock.statusEn === 'Watch') || (stock.statusEn === 'Watch' && stock.sepaScore?.total >= 85)) {
     return { cat: "核心觀察股", catEn: "Core Watchlist" };
   }
 
-  // 2. 接近買點 (Near Pivot): 距離 Pivot 小於 5%, VCP 接近完成碼
-  const pctToPivot = Math.abs(lastClose - buyPoint) / buyPoint;
-  const isNearPivot = pctToPivot <= 0.05 && (stock.pattern.includes("VCP") || stock.pattern.includes("整理") || stock.pattern.includes("收斂"));
-  if (isNearPivot) {
-    return { cat: "接近買點", catEn: "Near Pivot" };
-  }
-
-  // Double check Near Pivot by closeness to buyPoint within 5% if it's healthy and close
-  if (lastClose >= buyPoint * 0.94 && lastClose <= buyPoint * 1.05) {
-    return { cat: "接近買點", catEn: "Near Pivot" };
+  // 6. 一般追蹤
+  if (stock.statusEn === 'Watch') {
+    return { cat: "一般追蹤", catEn: "Regular Watch" };
   }
 
   return { cat: "一般追蹤", catEn: "Regular Watch" };
@@ -500,21 +483,21 @@ function computeStockAnalysis(
     calculatedPivot = Math.round(lastClose * 1.15 * 100) / 100;
   }
 
-  // Pivot locking logic
+  // Pivot locking logic - RESET ONLY on specific conditions
   const isBelow200MA = ma200 !== null && lastClose < ma200;
   const isBelow50MA = ma50 !== null && lastClose < ma50;
-  const isBelowPivotArea = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.95;
-  const patternFailed = profile === 'downtrend' || profile === 'overextended';
+  const isBelowBaseLow = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.92;
+  const patternFailed = profile === 'downtrend' || (!passed && previousAnalysis?.statusEn !== 'Breakout');
   const wasBreakout = previousAnalysis?.statusEn === 'Breakout';
-  const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout;
+  const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout && lastClose > previousAnalysis.buyPoint * 1.08;
   
-  const mustReset = isBelow200MA || isBelow50MA || isBelowPivotArea || patternFailed || isNewBasePattern;
+  const mustReset = isBelow200MA || isBelow50MA || isBelowBaseLow || patternFailed || isNewBasePattern;
   
-  if (previousAnalysis && previousAnalysis.buyPoint && !mustReset && previousAnalysis.status !== '不符合') {
+  if (previousAnalysis && previousAnalysis.buyPoint && !mustReset && previousAnalysis.statusEn !== 'Non-compliant') {
       pivotPrice = previousAnalysis.buyPoint;
       originalPivot = previousAnalysis.originalPivot || previousAnalysis.buyPoint;
       pivotCreationDate = previousAnalysis.pivotCreationDate || pivotCreationDate;
-      pivotStatus = previousAnalysis.status === '已突破' ? 'Breakout' : 'Fixed';
+      pivotStatus = previousAnalysis.statusEn === 'Breakout' ? 'Breakout' : 'Fixed';
       isNewBase = false;
   } else {
       pivotPrice = calculatedPivot;
@@ -579,34 +562,45 @@ function computeStockAnalysis(
   const targetPrice2 = Math.round(buyPoint * (1 + (riskPercent * 3) / 100) * 100) / 100;
   const pctToBuyPoint = Math.round(((buyPoint - lastClose) / lastClose) * 10000) / 100;
   
-  const trendPoints = Math.round((trendCount / 8) * 40);
-  const rsPoints = Math.round((rsRanking / 100) * 20);
+  const trendPoints = Math.round((trendCount / 8) * 35); // Max 35
+  const rsPoints = Math.round((rsRanking / 100) * 25);    // Max 25
   
   let vcpPoints = 0;
-  if (profile === "vcp-tight" || profile === "breakout") vcpPoints = 20;
+  if (profile === "vcp-tight") vcpPoints = 20;
+  else if (profile === "breakout") vcpPoints = 18;
   else if (profile === "forming-vcp") vcpPoints = 14;
   else if (profile === "flat-base") vcpPoints = 12;
-  else if (profile === "overextended") vcpPoints = 6;
-  else vcpPoints = 2;
+  else vcpPoints = 5;
   
   let volPoints = 0;
   if (profile === "vcp-tight") volPoints = 10;
   else if (profile === "flat-base") volPoints = 8;
   else if (profile === "forming-vcp") volPoints = 6;
   else if (profile === "breakout") volPoints = 9;
-  else if (profile === "overextended") volPoints = 3;
-  else volPoints = 1;
+  else volPoints = 2;
   
   let valPoints = 0;
   if (profile === "vcp-tight") valPoints = 10;
   else if (profile === "breakout") valPoints = 9;
   else if (profile === "flat-base") valPoints = 8;
   else if (profile === "forming-vcp") valPoints = 5;
-  else if (profile === "overextended") valPoints = 1;
   else valPoints = 0;
   
+  // Bonus points for tightness and risk/reward
+  let bonus = 0;
+  if (pctToBuyPoint < 2 && profile === "vcp-tight") bonus = 5;
+  if (riskPercent < 6) bonus += 5;
+  
+  // Penalties
+  let penalty = 0;
+  if (profile === 'overextended') penalty = 30; // Significant penalty for overextended
+  if (profile === 'downtrend') penalty = 50;
+  if (lastClose < ma200 && ma200) penalty += 20;
+
+  const total = Math.max(10, Math.min(100, trendPoints + rsPoints + vcpPoints + volPoints + valPoints + bonus - penalty));
+  
   const sepaScore = {
-    total: trendPoints + rsPoints + vcpPoints + volPoints + valPoints,
+    total,
     trendTemplate: trendPoints,
     rsStrength: rsPoints,
     vcpPattern: vcpPoints,
@@ -1274,10 +1268,30 @@ async function performMarketSync(): Promise<boolean> {
   // Update cache immediately after priority phase so user sees results right away
   if (finalTwList.length > 0) {
     console.log(`[Market Sync] Priority phase complete (${finalTwList.length} stocks). Updating intermediate cache.`);
+    
+    // Calculate intermediate RS
+    const currentRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+    
     const tempResults = finalTwList.map(s => {
+      const rankIndex = currentRSKeys.indexOf(s.ticker);
+      // If we only have priority stocks (usually strong), cap intermediate RS to avoid inflation
+      // but still show ranking among them. 
+      const rawRs = Math.floor((rankIndex / Math.max(1, currentRSKeys.length)) * 99) + 1;
+      const isPriorityOnly = currentRSKeys.length < 50;
+      const rs = isPriorityOnly ? Math.min(92, rawRs) : rawRs;
+      
       const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
-      return computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 90, s.industry, undefined, prev);
+      const analyzed = computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, rs, s.industry, undefined, prev);
+      if (analyzed) {
+         const tracker = watchlistTrackerRegistry[analyzed.ticker] || { ticker: analyzed.ticker, consecutiveDays: 0 };
+         const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
+         analyzed.watchlistCategory = cat;
+         analyzed.watchlistCategoryEn = catEn;
+         analyzed.consecutiveDays = tracker.consecutiveDays;
+      }
+      return analyzed;
     });
+    
     marketDataCache = {
       ...marketDataCache,
       lastUpdated: `優先股同步完成 (掃描中...)`,
@@ -1333,9 +1347,25 @@ async function performMarketSync(): Promise<boolean> {
       
       // If we have some data, update a "temp" cache so users see progress
       if (finalTwList.length > 5) {
+        const currentRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+        
         const tempResults = finalTwList.map(s => {
+          const rankIndex = currentRSKeys.indexOf(s.ticker);
+          const rawRs = Math.floor((rankIndex / Math.max(1, currentRSKeys.length)) * 99) + 1;
+          const isIntermediate = currentRSKeys.length < 300;
+          const rs = isIntermediate ? Math.min(95, rawRs) : rawRs;
+          
           const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
-          return computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 50, s.industry, undefined, prev);
+          const analyzed = computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, rs, s.industry, undefined, prev);
+          
+          if (analyzed) {
+             const tracker = watchlistTrackerRegistry[analyzed.ticker] || { ticker: analyzed.ticker, consecutiveDays: 0 };
+             const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
+             analyzed.watchlistCategory = cat;
+             analyzed.watchlistCategoryEn = catEn;
+             analyzed.consecutiveDays = tracker.consecutiveDays;
+          }
+          return analyzed;
         });
         const filteredTemp = tempResults.filter(Boolean);
         marketDataCache = {
