@@ -214,6 +214,8 @@ export default function App() {
 
   // Get active stock for details tab
   const activeStock = useMemo(() => {
+    if (!selectedTicker) return twStocks[0] || usStocks[0];
+
     // Priority: Search in local state first (most up-to-date)
     const localMatch = [...twStocks, ...usStocks].find(s => 
       s.ticker.toUpperCase() === selectedTicker.toUpperCase() || 
@@ -221,8 +223,12 @@ export default function App() {
     );
     if (localMatch) return localMatch;
     
-    // Fallback: DataProvider static cache
-    return DataProvider.getStockByTicker(selectedTicker) || twStocks[0] || usStocks[0];
+    // Fallback search in DataProvider
+    const providerMatch = DataProvider.getStockByTicker(selectedTicker);
+    if (providerMatch) return providerMatch;
+
+    // Last resort fallback (return previous if possible, but state is reactive so just return first if REALLY not found)
+    return twStocks[0] || usStocks[0];
   }, [selectedTicker, twStocks, usStocks]);
 
   const tsmcStock = useMemo(() => {

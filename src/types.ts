@@ -34,6 +34,7 @@ export interface SEPAScoreResult {
   vcpPattern: number;     // Max 20%
   volumeDryUp: number;    // Max 10%
   riskReward: number;     // Max 10%
+  penalty?: number;
 }
 
 export interface StockAnalysis {

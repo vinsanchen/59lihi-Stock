@@ -606,6 +606,7 @@ function computeStockAnalysis(
     vcpPattern: vcpPoints,
     volumeDryUp: volPoints,
     riskReward: valPoints,
+    penalty,
   };
   
   return {

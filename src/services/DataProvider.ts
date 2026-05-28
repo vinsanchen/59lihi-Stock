@@ -45,13 +45,26 @@ export class DataProvider {
         
         // Always update twStocks if data is present, don't wait for sync completion
         if (data.twStocks && data.twStocks.length > 0) {
-          this.twStocks = data.twStocks;
+          if (data.isBackgroundSyncing) {
+            // Merge into existing pool during partial syncs to avoid UI jumping/flickering
+            const exitMap = new Map(this.twStocks.map(s => [s.ticker, s]));
+            data.twStocks.forEach((s: StockAnalysis) => exitMap.set(s.ticker, s));
+            this.twStocks = Array.from(exitMap.values());
+          } else {
+            this.twStocks = data.twStocks;
+          }
         } else if (!data.isBackgroundSyncing) {
           this.twStocks = data.twStocks || [];
         }
 
         if (data.usStocks && data.usStocks.length > 0) {
-          this.usStocks = data.usStocks;
+          if (data.isBackgroundSyncing) {
+            const exitMap = new Map(this.usStocks.map(s => [s.ticker, s]));
+            data.usStocks.forEach((s: StockAnalysis) => exitMap.set(s.ticker, s));
+            this.usStocks = Array.from(exitMap.values());
+          } else {
+            this.usStocks = data.usStocks;
+          }
         } else if (!data.isBackgroundSyncing) {
           this.usStocks = data.usStocks || [];
         }
@@ -87,9 +100,9 @@ export class DataProvider {
     const weightedVol = (rawSepa.volumeDryUp || 0) * volWeightRatio;
     const weightedRR = (rawSepa.riskReward || 0) * rrWeightRatio;
 
-    const total = Math.min(100, Math.round(
+    const total = Math.max(10, Math.min(100, Math.round(
       weightedTrend + weightedRS + weightedVCP + weightedVol + weightedRR
-    ));
+    ) - (rawSepa.penalty || 0)));
 
     stock.sepaScore = {
       ...rawSepa,
