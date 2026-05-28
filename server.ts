@@ -395,36 +395,32 @@ function computeStockAnalysis(
   
   // ==========================================
   // Mark Minervini Trend Template (8 Strict Rules)
+  // Aligned with Frontend Labels order
   // ==========================================
   const ma50 = finalKlines[finalKlines.length - 1].ma50;
   const ma150 = finalKlines[finalKlines.length - 1].ma150;
   const ma200 = finalKlines[finalKlines.length - 1].ma200;
 
-  // 1. Current Price > 150MA and 200MA
-  const rule1 = ma150 !== null && ma200 !== null && lastClose > ma150 && lastClose > ma200;
-  // 2. 150MA > 200MA
-  const rule2 = ma150 !== null && ma200 !== null && ma150 > ma200;
-  // 3. 200MA is rising for at least 1 month
-  let rule3 = false;
+  // Rule 1: Close > 50MA
+  const rule1 = ma50 !== null && lastClose > ma50;
+  // Rule 2: 50MA > 150MA
+  const rule2 = ma50 !== null && ma150 !== null && ma50 > ma150;
+  // Rule 3: 50MA > 200MA
+  const rule3 = ma50 !== null && ma200 !== null && ma50 > ma200;
+  // Rule 4: 150MA > 200MA
+  const rule4 = ma150 !== null && ma200 !== null && ma150 > ma200;
+  // Rule 5: 200MA Rising (at least 1 month)
+  let rule5 = false;
   if (ma200 !== null && finalKlines.length >= 21) {
     const ma200Past = finalKlines[finalKlines.length - 21].ma200;
-    if (ma200Past !== null) {
-      rule3 = ma200 > ma200Past;
-    } else {
-      // If data just crossed 200 days, check if current price > ma200 for now or slight slope
-      rule3 = lastClose > ma200;
-    }
+    if (ma200Past !== null) rule5 = ma200 > ma200Past;
+    else rule5 = lastClose > ma200;
   }
-
-  // 4. 50MA > 150MA and 50MA > 200MA
-  const rule4 = ma50 !== null && ma150 !== null && ma200 !== null && ma50 > ma150 && ma50 > ma200;
-  // 5. Current Price > 50MA
-  const rule5 = ma50 !== null && lastClose > ma50;
-  // 6. Current Price is at least 30% above 52-week low
-  const rule6 = lastClose >= low52Week * 1.30;
-  // 7. Current Price is within 25% of 52-week high
-  const rule7 = lastClose >= high52Week * 0.75;
-  // 8. RS ranking is at least 70
+  // Rule 6: Close > 52W Low + 30%
+  const rule6 = low52Week > 0 && lastClose >= low52Week * 1.30;
+  // Rule 7: Close within 25% of 52W High
+  const rule7 = high52Week > 0 && lastClose >= high52Week * 0.75;
+  // Rule 8: RS Ranking >= 70
   const rule8 = rsRanking >= 70;
 
   const passed = rule1 && rule2 && rule3 && rule4 && rule5 && rule6 && rule7 && rule8;
@@ -432,10 +428,11 @@ function computeStockAnalysis(
   const trendTemplate = {
     passed,
     rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8,
-    closeAbove50MA: rule5,
-    ma50Above150MA: ma50 > ma150,
-    ma150Above200MA: rule2,
-    ma200Rising20Days: rule3,
+    closeAbove50MA: rule1,
+    ma50Above150MA: rule2,
+    ma50Above200MA: rule3,
+    ma150Above200MA: rule4,
+    ma200Rising20Days: rule5,
     closeAbove52WLowPct: rule6,
     closeNear52WHighPct: rule7,
     rsRankingAbove70: rule8
@@ -499,7 +496,13 @@ function computeStockAnalysis(
   let statusEn = "Watch";
   let suggestion = "";
   
-  if (profile === "vcp-tight") {
+  // MANDATORY: If Trend Template fails, it MUST NOT be given a positive status
+  if (!passed) {
+    status = "不符合";
+    statusEn = "Non-compliant";
+    suggestion = "目前不符趨勢樣板。股價可能回落至均線下方或大趨勢不連貫，交易者應耐心等待其重新站回關鍵水位。";
+    stopLoss = Math.round(lastClose * 0.88 * 100) / 100;
+  } else if (profile === "vcp-tight") {
     if (lastClose >= pivotPrice * 0.96 && lastClose <= pivotPrice * 1.05) {
       status = "接近買點";
       statusEn = "Near Pivot";
@@ -1221,8 +1224,8 @@ async function performMarketSync(): Promise<boolean> {
         initializeWatchlistTracker();
       }
       
-      // Strict SEPA logic for Watchlist (RS > 70 and pass template OR RS > 85)
-      const meetsSEPA = (analyzed.trendTemplate?.passed && analyzed.rsRanking >= 70) || analyzed.rsRanking >= 85;
+      // Strict SEPA logic for Watchlist (8/8 Template MUST pass)
+      const meetsSEPA = !!analyzed.trendTemplate?.passed;
       let tracker = watchlistTrackerRegistry[trackerKey];
       if (!tracker) {
         tracker = {
@@ -1257,8 +1260,8 @@ async function performMarketSync(): Promise<boolean> {
     const liquidityPass = stock.klines && stock.klines.length >= 160 && stock.lastClose >= 12;
     const turnoverPass = (stock.lastClose * stock.avgVolume20 > 400000); 
     
-    // Trend condition: Either strictly pass template (Stage 2) OR have elite RS ranking
-    const trendPass = (stock.trendTemplate?.passed) || stock.rsRanking >= 80;
+    // Trend condition: Strictly enforce Minervini Trend Template (8/8)
+    const trendPass = !!stock.trendTemplate?.passed;
     
     return liquidityPass && turnoverPass && trendPass;
   });
