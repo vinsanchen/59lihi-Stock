@@ -75,57 +75,62 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
 
-// TAIEX & Stock Data Real Scraper using Yahoo Finance
-const TW_TICKERS = [
-  { ticker: "2330", name: "台積電", mainIndustry: "電子類", subIndustry: "半導體", rs: 91 },
-  { ticker: "2317", name: "鴻海", mainIndustry: "電子類", subIndustry: "AI 伺服器", rs: 88 },
-  { ticker: "2454", name: "聯發科", mainIndustry: "電子類", subIndustry: "半導體", rs: 82 },
-  { ticker: "3008", name: "大立光", mainIndustry: "電子類", subIndustry: "半導體", rs: 38 },
-  { ticker: "1519", name: "華城", mainIndustry: "傳產類", subIndustry: "", rs: 96 },
-  { ticker: "3231", name: "緯創", mainIndustry: "電子類", subIndustry: "AI 伺服器", rs: 72 },
-  { ticker: "2382", name: "廣達", mainIndustry: "電子類", subIndustry: "AI 伺服器", rs: 85 },
-  { ticker: "1513", name: "中興電", mainIndustry: "傳產類", subIndustry: "", rs: 83 },
-  { ticker: "2603", name: "長榮", mainIndustry: "傳產類", subIndustry: "", rs: 84 },
-  { ticker: "2308", name: "台達電", mainIndustry: "電子類", subIndustry: "電源 / 功率半導體", rs: 74 },
-  { ticker: "3653", name: "健策", mainIndustry: "電子類", subIndustry: "散熱", rs: 93 },
-  { ticker: "2337", name: "旺宏", mainIndustry: "電子類", subIndustry: "半導體", rs: 31 },
-  { ticker: "3481", name: "群創", mainIndustry: "電子類", subIndustry: "半導體", rs: 41 },
-  { ticker: "2303", name: "聯電", mainIndustry: "電子類", subIndustry: "半導體", rs: 55 },
-  { ticker: "2881", name: "富邦金", mainIndustry: "金融類", subIndustry: "", rs: 78 },
-  { ticker: "2882", name: "國泰金", mainIndustry: "金融類", subIndustry: "", rs: 72 },
-  { ticker: "3037", name: "欣興", mainIndustry: "電子類", subIndustry: "PCB / ABF", rs: 81 },
-  { ticker: "8046", name: "南電", mainIndustry: "電子類", subIndustry: "PCB / ABF", rs: 68 },
-  { ticker: "2368", name: "金像電", mainIndustry: "電子類", subIndustry: "PCB / ABF", rs: 86 },
-  { ticker: "3017", name: "奇鋐", mainIndustry: "電子類", subIndustry: "散熱", rs: 92 },
-  { ticker: "3324", name: "雙鴻", mainIndustry: "電子類", subIndustry: "散熱", rs: 94 },
-  { ticker: "2301", name: "光寶科", mainIndustry: "電子類", subIndustry: "電源 / 功率半導體", rs: 70 },
-  { ticker: "6415", name: "矽力*-KY", mainIndustry: "電子類", subIndustry: "電源 / 功率半導體", rs: 75 },
-  { ticker: "3711", name: "日月光投控", mainIndustry: "電子類", subIndustry: "半導體", rs: 80 },
-  { ticker: "2449", name: "京元電子", mainIndustry: "電子類", subIndustry: "半導體", rs: 84 },
-  { ticker: "6669", name: "緯穎", mainIndustry: "電子類", subIndustry: "AI 伺服器", rs: 89 },
-  { ticker: "2383", name: "台光電", mainIndustry: "電子類", subIndustry: "PCB / ABF", rs: 87 },
-];
+// Scrapers and Data Lists are now dynamic.
+// No hardcoded TW_TICKERS or US_TICKERS.
+let twseStockList: { ticker: string, name: string, industry: string }[] = [];
 
-const US_TICKERS = [
-  { ticker: "NVDA", name: "NVIDIA Corp", rs: 95 },
-  { ticker: "AAPL", name: "Apple Inc.", rs: 78 },
-  { ticker: "MSFT", name: "Microsoft Corp", rs: 80 },
-  { ticker: "TSLA", name: "Tesla Inc.", rs: 65 },
-  { ticker: "PLTR", name: "Palantir Technologies", rs: 96 },
-  { ticker: "LLY", name: "Eli Lilly & Co", rs: 94 },
-  { ticker: "AVGO", name: "Broadcom Inc.", rs: 91 },
-  { ticker: "AMD", name: "Advanced Micro Devices", rs: 74 },
-  { ticker: "META", name: "Meta Platforms", rs: 90 },
-  { ticker: "AMZN", name: "Amazon.com Inc.", rs: 82 },
-  { ticker: "NFLX", name: "Netflix Inc.", rs: 89 },
-  { ticker: "COIN", name: "Coinbase Global", rs: 92 },
-  { ticker: "SMCI", name: "Super Micro Computer", rs: 51 },
-  { ticker: "CRWD", name: "CrowdStrike Holdings", rs: 81 },
-  { ticker: "NET", name: "Cloudflare Inc.", rs: 83 },
-  { ticker: "MSTR", name: "MicroStrategy", rs: 95 },
-  { ticker: "SMH", name: "Semiconductor ETF", rs: 85 },
-  { ticker: "CELH", name: "Celsius Holdings", rs: 52 },
-];
+async function fetchTWSEList(): Promise<{ ticker: string, name: string, industry: string }[]> {
+  console.log("[TWSE Scraper] Fetching latest listed stock manifest from ISIN public database...");
+  const url = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2";
+  
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buffer = await res.arrayBuffer();
+    const decoder = new TextDecoder('big5');
+    const text = decoder.decode(buffer);
+    
+    const rows = text.split('<tr>');
+    const stocks: { ticker: string, name: string, industry: string }[] = [];
+    
+    let inStockSection = false;
+    for (let row of rows) {
+      if (row.includes("<B> 股票 <B>")) {
+        inStockSection = true;
+        continue;
+      }
+      
+      // Stop sections
+      if (inStockSection && (row.includes("上市認購(售)權證") || row.includes("存託憑證") || row.includes("受益證券") || row.includes("ETF") || row.includes("特別股"))) {
+        inStockSection = false;
+        continue;
+      }
+
+      if (inStockSection) {
+        const cells = row.split(/<td[^>]*>/).map(c => c.split('</td>')[0].replace(/<[^>]*>/g, '').trim());
+        if (cells.length >= 6) {
+          const firstCell = cells[1]; 
+          const match = firstCell.match(/^(\d{4,6})[　\s]+(.+)$/);
+          if (match) {
+            const ticker = match[1];
+            const name = match[2].trim();
+            const market = cells[4];   
+            const industry = cells[5]; 
+            
+            if (market === "上市" && ticker.length === 4) {
+              stocks.push({ ticker, name, industry });
+            }
+          }
+        }
+      }
+    }
+    console.log(`[TWSE Scraper] Successfully retrieved ${stocks.length} listed stocks.`);
+    return stocks;
+  } catch (err: any) {
+    console.error("[TWSE Scraper Error] Failed to fetch stock list:", err.message || err);
+    return [];
+  }
+}
 
 // Memory database / cache for market scrape results
 let marketDataCache: {
@@ -134,11 +139,13 @@ let marketDataCache: {
   nasdaq: { price: number; changePercent: number; date: string };
   twStocks: any[];
   usStocks: any[];
+  stockPoolCount?: number;
 } | null = null;
 
 // Cool-down tracking to protect Yahoo Finance and Stooq API from rate blocks
 let yahooRateLimitUntil = 0;
 let stooqRateLimitUntil = 0;
+let finMindRateLimitUntil = 0;
 
 // ==========================================
 // SEPA Watchlist Tracker Registry
@@ -151,48 +158,14 @@ interface WatchlistTrackerItem {
 }
 let watchlistTrackerRegistry: Record<string, WatchlistTrackerItem> = {};
 
+// Initialize Watchlist Tracker
 function initializeWatchlistTracker() {
-  const defaultSeeds: Record<string, number> = {
-    "2330": 15, // 台積電
-    "2317": 14, // 鴻海
-    "2382": 12, // 廣達
-    "3653": 22, // 健策
-    "2383": 26, // 台光電
-    "6669": 18, // 緯穎
-    "1513": 10,  // 中興電
-    "1519": 8,   // 華城
-    "3017": 11, // 奇鋐
-    "3324": 14, // 雙鴻
-    "3037": 9,  // 欣興
-    "2449": 8,  // 京元電子
-    "NVDA": 28, // NVIDIA
-    "MSFT": 19, // Microsoft
-    "AAPL": 16, // Apple
-    "PLTR": 25, // Palantir
-    "LLY": 21,  // Eli Lilly
-    "AVGO": 18, // Broadcom
-    "NET": 13,  // Cloudflare
-    "MSTR": 20, // MicroStrategy
-  };
-
   const TRACKER_FILE = path.join(process.cwd(), "watchlist_tracker.json");
   try {
     if (fs.existsSync(TRACKER_FILE)) {
       const data = fs.readFileSync(TRACKER_FILE, "utf-8");
       watchlistTrackerRegistry = JSON.parse(data) || {};
-      console.log(`[Watchlist Tracker] Loaded ${Object.keys(watchlistTrackerRegistry).length} custom tracked stocks from disk.`);
-      
-      // Make sure our core requested stock seeds have values if missing
-      for (const ticker in defaultSeeds) {
-        if (!watchlistTrackerRegistry[ticker]) {
-          watchlistTrackerRegistry[ticker] = {
-            ticker,
-            consecutiveDays: defaultSeeds[ticker],
-            watchlistCategory: "核心觀察股",
-            watchlistCategoryEn: "Core Watchlist"
-          };
-        }
-      }
+      console.log(`[Watchlist Tracker] Loaded ${Object.keys(watchlistTrackerRegistry).length} tracked stocks from disk.`);
       return;
     }
   } catch (e) {
@@ -200,16 +173,7 @@ function initializeWatchlistTracker() {
   }
 
   // Pre-seed default tracker
-  console.log(`[Watchlist Tracker] Initializing fresh registry seeds...`);
-  for (const ticker in defaultSeeds) {
-    const days = defaultSeeds[ticker];
-    watchlistTrackerRegistry[ticker] = {
-      ticker,
-      consecutiveDays: days,
-      watchlistCategory: "核心觀察股",
-      watchlistCategoryEn: "Core Watchlist"
-    };
-  }
+  console.log(`[Watchlist Tracker] Initializing fresh registry...`);
   saveWatchlistTrackerToDisk();
 }
 
@@ -253,9 +217,14 @@ function determineDynamicWatchlistCategory(stock: any, consecutiveDays: number):
     return { cat: "過度延伸", catEn: "Extended" };
   }
 
-  // 1. 核心觀察股 (Core Watchlist): 最近 2~6 週持續符合 SEPA 條件 (consecutiveDays >= 10), RS 持續強勢 (rsRanking >= 75), 趨勢結構穩定
-  const isCore = consecutiveDays >= 10 && stock.rsRanking >= 75 && stock.trendTemplate?.passed;
+  // 1. 核心觀察股 (Core Watchlist): 最近持續符合 SEPA 條件
+  const isCore = consecutiveDays >= 3 && stock.rsRanking >= 80 && stock.trendTemplate?.passed;
   if (isCore) {
+    return { cat: "核心觀察股", catEn: "Core Watchlist" };
+  }
+  
+  // 1b. 一般追蹤 (RS 領跑但天數不足)
+  if (stock.rsRanking >= 90 && stock.trendTemplate?.passed) {
     return { cat: "核心觀察股", catEn: "Core Watchlist" };
   }
 
@@ -284,8 +253,8 @@ function loadCacheFromFile() {
       const parsed = JSON.parse(data);
       if (parsed && parsed.lastUpdated && Array.isArray(parsed.twStocks) && Array.isArray(parsed.usStocks)) {
         const firstTW = parsed.twStocks[0];
-        if (firstTW && Array.isArray(firstTW.klines) && firstTW.klines.length < 200) {
-          console.log(`[Cache Invalidation] Disk cache has only ${firstTW.klines.length} klines. Discarding to trigger a fresh 250-day scale synchronization.`);
+        if (firstTW && Array.isArray(firstTW.klines) && firstTW.klines.length < 150) {
+          console.log(`[Cache Invalidation] Disk cache has only ${firstTW.klines.length} klines. Discarding to trigger a fresh 200-day scale synchronization.`);
           return;
         }
         marketDataCache = parsed;
@@ -365,7 +334,7 @@ function computeStockAnalysis(
   mainIndustry?: string,
   subIndustry?: string
 ): any {
-  if (!rawKlines || rawKlines.length < 50) {
+  if (!rawKlines || rawKlines.length < 160) {
     return null;
   }
   
@@ -380,7 +349,7 @@ function computeStockAnalysis(
       for (let j = idx - 49; j <= idx; j++) sum50 += klines[j].close;
       klines[idx].ma50 = Math.round((sum50 / 50) * 100) / 100;
     } else {
-      klines[idx].ma50 = klines[idx].close;
+      klines[idx].ma50 = null; 
     }
     
     // 150MA
@@ -389,7 +358,7 @@ function computeStockAnalysis(
       for (let j = idx - 149; j <= idx; j++) sum150 += klines[j].close;
       klines[idx].ma150 = Math.round((sum150 / 150) * 100) / 100;
     } else {
-      klines[idx].ma150 = klines[idx].close;
+      klines[idx].ma150 = null;
     }
     
     // 200MA
@@ -398,13 +367,13 @@ function computeStockAnalysis(
       for (let j = idx - 199; j <= idx; j++) sum200 += klines[j].close;
       klines[idx].ma200 = Math.round((sum200 / 200) * 100) / 100;
     } else {
-      klines[idx].ma200 = klines[idx].close;
+      klines[idx].ma200 = null;
     }
   }
   
-  // Slice to last 250 days to prevent large bundle transfers but maintain enough for drawing charts & meeting the 200-day filters
-  const finalKlines = klines.slice(-250);
-  if (finalKlines.length === 0) return null;
+  // Slice to last 260 days for analysis
+  const finalKlines = klines.slice(-260);
+  const lastClose = finalKlines[finalKlines.length - 1].close;
   
   let high52Week = -Infinity;
   let low52Week = Infinity;
@@ -413,7 +382,6 @@ function computeStockAnalysis(
     if (bar.low < low52Week) low52Week = bar.low;
   }
   
-  const lastClose = finalKlines[finalKlines.length - 1].close;
   const yesterdayClose = finalKlines.length > 1 ? finalKlines[finalKlines.length - 2].close : lastClose;
   const changePercent = yesterdayClose ? ((lastClose - yesterdayClose) / yesterdayClose) * 100 : 0;
   const volume = finalKlines[finalKlines.length - 1].volume;
@@ -425,52 +393,75 @@ function computeStockAnalysis(
   }
   const avgVolume20 = Math.round(sumVol20 / Math.max(1, volCount));
   
-  // Check 200MA rising
-  const ma200End = finalKlines[finalKlines.length - 1].ma200 || 0;
-  let ma200Rising20Days = true;
-  if (finalKlines.length >= 21) {
-    ma200Rising20Days = ma200End >= (finalKlines[finalKlines.length - 21].ma200 || 0);
+  // ==========================================
+  // Mark Minervini Trend Template (8 Strict Rules)
+  // ==========================================
+  const ma50 = finalKlines[finalKlines.length - 1].ma50;
+  const ma150 = finalKlines[finalKlines.length - 1].ma150;
+  const ma200 = finalKlines[finalKlines.length - 1].ma200;
+
+  // 1. Current Price > 150MA and 200MA
+  const rule1 = ma150 !== null && ma200 !== null && lastClose > ma150 && lastClose > ma200;
+  // 2. 150MA > 200MA
+  const rule2 = ma150 !== null && ma200 !== null && ma150 > ma200;
+  // 3. 200MA is rising for at least 1 month
+  let rule3 = false;
+  if (ma200 !== null && finalKlines.length >= 21) {
+    const ma200Past = finalKlines[finalKlines.length - 21].ma200;
+    if (ma200Past !== null) {
+      rule3 = ma200 > ma200Past;
+    } else {
+      // If data just crossed 200 days, check if current price > ma200 for now or slight slope
+      rule3 = lastClose > ma200;
+    }
   }
-  
-  const ma50Value = finalKlines[finalKlines.length - 1].ma50 || 0;
-  const closeAbove50MA = lastClose > ma50Value;
-  
-  const ma150Value = finalKlines[finalKlines.length - 1].ma150 || 0;
-  const ma50Above150MA = ma50Value > ma150Value;
-  
-  const ma200Value = finalKlines[finalKlines.length - 1].ma200 || 0;
-  const ma50Above200MA = ma50Value > ma200Value;
-  const ma150Above200MA = ma150Value > ma200Value;
-  
-  const closeAbove52WLowPct = lastClose >= low52Week * 1.15; // Realistic lower threshold for actual real stocks
-  const closeNear52WHighPct = lastClose >= high52Week * 0.70; // Realistic threshold
-  const rsRankingAbove70 = rsRanking >= 70;
-  
-  const passedCount = 
-    (closeAbove50MA ? 1 : 0) +
-    (ma50Above150MA ? 1 : 0) +
-    (ma50Above200MA ? 1 : 0) +
-    (ma150Above200MA ? 1 : 0) +
-    (ma200Rising20Days ? 1 : 0) +
-    (closeAbove52WLowPct ? 1 : 0) +
-    (closeNear52WHighPct ? 1 : 0) +
-    (rsRankingAbove70 ? 1 : 0);
-    
-  const passed = passedCount >= 7; // Require 7 out of 8 to pass for real market conditions, providing more targets
+
+  // 4. 50MA > 150MA and 50MA > 200MA
+  const rule4 = ma50 !== null && ma150 !== null && ma200 !== null && ma50 > ma150 && ma50 > ma200;
+  // 5. Current Price > 50MA
+  const rule5 = ma50 !== null && lastClose > ma50;
+  // 6. Current Price is at least 30% above 52-week low
+  const rule6 = lastClose >= low52Week * 1.30;
+  // 7. Current Price is within 25% of 52-week high
+  const rule7 = lastClose >= high52Week * 0.75;
+  // 8. RS ranking is at least 70
+  const rule8 = rsRanking >= 70;
+
+  const passed = rule1 && rule2 && rule3 && rule4 && rule5 && rule6 && rule7 && rule8;
   
   const trendTemplate = {
     passed,
-    closeAbove50MA,
-    ma50Above150MA,
-    ma50Above200MA,
-    ma150Above200MA,
-    ma200Rising20Days,
-    closeAbove52WLowPct,
-    closeNear52WHighPct,
-    rsRankingAbove70,
+    rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8,
+    closeAbove50MA: rule5,
+    ma50Above150MA: ma50 > ma150,
+    ma150Above200MA: rule2,
+    ma200Rising20Days: rule3,
+    closeAbove52WLowPct: rule6,
+    closeNear52WHighPct: rule7,
+    rsRankingAbove70: rule8
   };
   
-  const profile = detectProfile(lastClose, finalKlines, passedCount, high52Week, low52Week, avgVolume20, volume);
+  // Mapping for Industry Analysis
+  let finalSubIndustry = subIndustry || "";
+  const n = name.toUpperCase();
+  const indRaw = (mainIndustry || "").toUpperCase();
+  
+  if (n.includes("伺服器") || n.includes("廣達") || n.includes("緯穎") || n.includes("緯創") || n.includes("技嘉") || n.includes("勤誠") || n.includes("川湖")) {
+    finalSubIndustry = "AI 伺服器";
+  } else if (n.includes("欣興") || n.includes("南電") || n.includes("景碩") || n.includes("臻鼎") || n.includes("健鼎") || n.includes("台光電") || n.includes("金像電")) {
+    finalSubIndustry = "PCB / ABF";
+  } else if (n.includes("電源") || n.includes("台達電") || n.includes("茂達") || n.includes("光寶科") || n.includes("康舒")) {
+    finalSubIndustry = "電源 / 功率半導體";
+  } else if (n.includes("散熱") || n.includes("雙鴻") || n.includes("奇鋐") || n.includes("尼得科超眾") || n.includes("建準")) {
+    finalSubIndustry = "散熱";
+  } else if (indRaw.includes("半導體") || n.includes("台積電") || n.includes("聯電") || n.includes("日月光") || n.includes("創意") || n.includes("世芯") || n.includes("智原")) {
+    finalSubIndustry = "半導體";
+  } else {
+    finalSubIndustry = mainIndustry || "其他";
+  }
+  
+  const trendCount = Object.values(trendTemplate).filter(v => v === true).length;
+  const profile = detectProfile(lastClose, finalKlines, trendCount, high52Week, low52Week, avgVolume20, volume);
   
   let pattern = "無明顯型態";
   let vcpPhaseDesc = "";
@@ -551,7 +542,7 @@ function computeStockAnalysis(
   const targetPrice2 = Math.round(buyPoint * (1 + (riskPercent * 3) / 100) * 100) / 100;
   const pctToBuyPoint = Math.round(((buyPoint - lastClose) / lastClose) * 10000) / 100;
   
-  const trendPoints = Math.round((passedCount / 8) * 40);
+  const trendPoints = Math.round((trendCount / 8) * 40);
   const rsPoints = Math.round((rsRanking / 100) * 20);
   
   let vcpPoints = 0;
@@ -592,7 +583,7 @@ function computeStockAnalysis(
     marketType,
     country,
     mainIndustry: mainIndustry || "",
-    subIndustry: subIndustry || "",
+    subIndustry: finalSubIndustry,
     lastClose,
     changePercent,
     volume,
@@ -619,9 +610,7 @@ function computeStockAnalysis(
 
 // Scrapes a ticker from Yahoo Finance Chart API with auto-fallback and rotation
 async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true): Promise<any> {
-  // Only honor cooldown on the initial attempt (useQuery2 = true) for a given stock, 
-  // so immediate sub-query fallback or retry is never throttled.
-  if (useQuery2 && Date.now() < yahooRateLimitUntil) {
+  if (Date.now() < yahooRateLimitUntil) {
     return null;
   }
   const subdomain = useQuery2 ? "query2" : "query1";
@@ -680,14 +669,22 @@ async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true):
     
     console.warn(`[Yahoo Scraper Warning] Ticker: ${ticker} failed on ${subdomain} (Reason: ${reason}).`);
     
+    if (reason === "rate limit" || reason === "API blocked") {
+      // Exponentially increase cooldown for global blocks
+      const currentCooldown = yahooRateLimitUntil - Date.now();
+      const nextCooldown = Math.max(10 * 60 * 1000, currentCooldown * 1.5);
+      yahooRateLimitUntil = Date.now() + nextCooldown;
+    }
+    
+    // For critical indices, prioritize retry with query1 
+    const isIndex = ticker.startsWith("^");
     if (useQuery2) {
-      // Immediate fallback to query1
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, isIndex ? 500 : 100));
       return getYahooChartData(ticker, retries, false);
     }
     
     if (retries > 0) {
-      const waitTime = 200 * (2 - retries);
+      const waitTime = (isIndex ? 1000 : 200) * (2 - retries);
       console.log(`[Retrying] Ticker: ${ticker}, remaining retries: ${retries}, waiting ${waitTime}ms...`);
       await new Promise(r => setTimeout(r, waitTime));
       return getYahooChartData(ticker, retries - 1, true);
@@ -738,6 +735,9 @@ function parseYahooKLines(json: any): any[] {
 
 // Scrape Taiwan Stock Price using FinMind API
 async function getFinMindChartData(ticker: string): Promise<any[]> {
+  if (Date.now() < finMindRateLimitUntil) {
+    return [];
+  }
   const oneYearAgo = new Date();
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
   const startDateStr = oneYearAgo.toISOString().split("T")[0];
@@ -752,6 +752,9 @@ async function getFinMindChartData(ticker: string): Promise<any[]> {
     clearTimeout(id);
     
     if (!res.ok) {
+      if (res.status === 402 || res.status === 403 || res.status === 429) {
+        finMindRateLimitUntil = Date.now() + 30 * 60 * 1000; // 30 mins block for 403/402
+      }
       throw new Error(`FinMind HTTP ${res.status}`);
     }
     
@@ -813,9 +816,17 @@ async function getStooqChartData(ticker: string, isTW: boolean): Promise<any[]> 
     if (lines.length < 2) return [];
     
     const header = lines[0].toLowerCase();
-    if (!header.includes("date") || !header.includes("open") || header.includes("apikey") || header.includes("api key") || csvText.toLowerCase().includes("apikey")) {
-      console.warn(`[Stooq Reject] CSV header validation failed for ${symbol}: ${lines[0]}. Engaging ephemeral Stooq cooldown.`);
-      stooqRateLimitUntil = Date.now() + 10 * 1000; // 10 seconds block instead of 15 mins
+    const isApiKeyRequest = csvText.toLowerCase().includes("apikey") || csvText.toLowerCase().includes("api key") || csvText.toLowerCase().includes("unauthorized");
+    
+    if (isApiKeyRequest) {
+      console.warn(`[Stooq Reject] API Key required/Rate limited for ${symbol}. Engaging persistent Stooq cooldown.`);
+      stooqRateLimitUntil = Date.now() + 60 * 60 * 1000; // 1 hour block
+      return [];
+    }
+
+    if (!header.includes("date") || !header.includes("open")) {
+      console.warn(`[Stooq Reject] CSV format invalid for ${symbol}: ${lines[0]}. Engaging ephemeral Stooq cooldown.`);
+      stooqRateLimitUntil = Date.now() + 10 * 60 * 1000; // 10 minutes block
       return [];
     }
     
@@ -900,19 +911,29 @@ async function fetchIndexDataBulk(): Promise<{
   };
 
   const subdomains = ["query1", "query2"];
-  for (const sub of subdomains) {
-    try {
-      const url = `https://${sub}.finance.yahoo.com/v7/finance/quote?symbols=^TWII,^IXIC`;
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  if (Date.now() < yahooRateLimitUntil) {
+    console.log("[Bulk Index] Skipping Yahoo Finance bulk fetch due to active rate-limit.");
+  } else {
+    for (const sub of subdomains) {
+      if (Date.now() < yahooRateLimitUntil) break;
+      try {
+        const url = `https://${sub}.finance.yahoo.com/v7/finance/quote?symbols=^TWII,^IXIC`;
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          }
+        });
+        clearTimeout(id);
+        
+        if (res.status === 429 || res.status === 403) {
+           yahooRateLimitUntil = Date.now() + 5 * 60 * 1000;
+           throw new Error(`Yahoo HTTP ${res.status}`);
         }
-      });
-      clearTimeout(id);
-      if (res.ok) {
+
+        if (res.ok) {
         const json = await res.json();
         const results = json?.quoteResponse?.result;
         if (Array.isArray(results) && results.length > 0) {
@@ -923,8 +944,9 @@ async function fetchIndexDataBulk(): Promise<{
           let nasdaq = fallback.nasdaq;
           
           if (twResult) {
-            const price = twResult.regularMarketPrice ?? twResult.regularMarketPreviousClose;
-            const pct = twResult.regularMarketChangePercent ?? 0;
+            const price = twResult.regularMarketPrice;
+            const prevClose = twResult.regularMarketPreviousClose;
+            const pct = twResult.regularMarketChangePercent ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : 0);
             const date = twResult.regularMarketTime 
               ? new Date(twResult.regularMarketTime * 1000).toISOString().split("T")[0] 
               : currentDateStr;
@@ -934,8 +956,9 @@ async function fetchIndexDataBulk(): Promise<{
           }
           
           if (nasdaqResult) {
-            const price = nasdaqResult.regularMarketPrice ?? nasdaqResult.regularMarketPreviousClose;
-            const pct = nasdaqResult.regularMarketChangePercent ?? 0;
+            const price = nasdaqResult.regularMarketPrice;
+            const prevClose = nasdaqResult.regularMarketPreviousClose;
+            const pct = nasdaqResult.regularMarketChangePercent ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : 0);
             const date = nasdaqResult.regularMarketTime 
               ? new Date(nasdaqResult.regularMarketTime * 1000).toISOString().split("T")[0] 
               : currentDateStr;
@@ -952,6 +975,7 @@ async function fetchIndexDataBulk(): Promise<{
       console.warn(`[Bulk Index Warning] Failed using Yahoo ${sub}:`, err.message || err);
     }
   }
+}
 
   console.log(`[Bulk Index Fallback] Falling back to separate fetch index method...`);
   const taiexSingle = await fetchIndexData("^TWII");
@@ -1000,6 +1024,11 @@ async function fetchIndexData(indexSymbol: string): Promise<{ price: number; cha
     }
   }
   
+  // High Priority: Always attempt direct fetch for Nasdaq if Yahoo failed
+  if (indexSymbol === "^IXIC") {
+     console.log(`[Index Recovery] Attempting direct Stooq fetch for Nasdaq...`);
+  }
+  
   // 3. Try Stooq downloader - ONLY if it's not known to require API keys or fail, or run with low risk
   let stooqSym = "";
   if (indexSymbol === "^TWII") {
@@ -1031,9 +1060,9 @@ async function fetchIndexData(indexSymbol: string): Promise<{ price: number; cha
   return defaultIndices[indexSymbol];
 }
 
-// Unified multi-provider KLine fetcher - prioritizes FinMind for Taiwan, Yahoo/Stooq for US
+// Unified multi-provider KLine fetcher - prioritizes FinMind for Taiwan
 async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Promise<{ klines: any[]; isMock: boolean }> {
-  // Option A: FinMind (Prioritized for Taiwan stocks to save API bandwidth and avoid blocks)
+  // Option A: FinMind (Prioritized for Taiwan stocks)
   if (isTW) {
     try {
       const klines = await getFinMindChartData(ticker);
@@ -1041,117 +1070,159 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
         return { klines, isMock: false };
       }
     } catch (err: any) {
-      console.warn(`[Scraping Warning] FinMind API bypass failed on ${ticker}. Escalating...`);
+      console.warn(`[TW-FETCH] FinMind failover for ${ticker}`);
     }
   }
 
-  // Option B: Try Yahoo Finance
-  const yTicker = isTW ? `${ticker}.TW` : ticker;
-  if (Date.now() >= yahooRateLimitUntil) {
-    try {
-      const rawData = await getYahooChartData(yTicker);
-      if (rawData) {
-        const klines = parseYahooKLines(rawData);
-        if (klines && klines.length >= 50) {
-          return { klines, isMock: false };
-        }
+  // Option B. Yahoo Finance Charts
+  try {
+    const raw = await getYahooChartData(isTW ? `${ticker}.TW` : ticker);
+    if (raw) {
+      const klines = parseYahooKLines(raw);
+      if (klines && klines.length >= 50) {
+        return { klines, isMock: false };
       }
-    } catch (err: any) {
-      console.warn(`[Scraping Warning] Yahoo rate limit/block on ${yTicker}. Diverting request flow...`);
     }
-  } else {
-    console.log(`[Yahoo Cooldown] Skipping Yahoo Finance for ${yTicker} due to active rate-limit block protection.`);
+  } catch (err: any) {
+    console.warn(`[Scraping Warning] Yahoo Finance chart failover for ${ticker}`);
   }
   
-  // Option C: Try Stooq CSV Download proxy
+  // Option C. Stooq CSV
   try {
     const klines = await getStooqChartData(ticker, isTW);
     if (klines && klines.length >= 50) {
       return { klines, isMock: false };
     }
   } catch (err: any) {
-    console.warn(`[Scraping Warning] Stooq CSV failover abortive on ${ticker}. Activating high fidelity localized fallback...`);
+    console.warn(`[Scraping Warning] Stooq CSV failover abortive on ${ticker}.`);
   }
   
-  // Option D. High fidelity localized simulation
-  const klines = generatePristineFallback(ticker, isTW, name);
-  return { klines, isMock: true };
+  // No mock data allowed - return empty if all sources fail
+  return { klines: [], isMock: false };
 }
 
-// Generate fallback database to avoid empty screen during network dropouts
-function generatePristineFallback(ticker: string, isTW: boolean, name: string): any[] {
-  const count = 240;
-  const klines: any[] = [];
-  let price = isTW ? 100 : 150;
-  if (ticker === "2330") price = 940;
-  else if (ticker === "2317") price = 180;
-  
-  const today = new Date();
-  for (let i = 0; i < count; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - (count - i));
-    const dStr = d.toISOString().split("T")[0];
-    const change = (Math.random() - 0.485) * 3; // slight upward drift
-    price = price * (1 + change / 100);
-    const spread = price * (0.01 + Math.random() * 0.02);
-    
-    klines.push({
-      date: dStr,
-      open: Math.round((price - spread * 0.3) * 100) / 100,
-      high: Math.round((price + spread * 0.5) * 100) / 100,
-      low: Math.round((price - spread * 0.5) * 100) / 100,
-      close: Math.round(price * 100) / 100,
-      volume: Math.round(1000000 + Math.random() * 6000000)
-    });
-  }
-  return klines;
-}
-
-// Perform sequential/parallel scrape of index values and stocks
+// Perform market sync across all TWSE listed stocks
 async function performMarketSync(): Promise<boolean> {
-  console.log("[Market Sync Started] Bootstrapping real-time market data across multiple failovers (Yahoo -> FinMind -> Stooq)...");
+  console.log("[Market Sync Started] Bootstrapping real-time market scanner for TWSE...");
   
   // 1. Scrape Index Data in bulk
-  const indexData = await fetchIndexDataBulk();
+  let indexData = await fetchIndexDataBulk();
+  
+  // High reliability cross-check for TAIEX
+  if (!indexData.taiex || indexData.taiex.price < 1000) {
+     const finInfo = await fetchTaiexFromFinMind();
+     if (finInfo) indexData.taiex = finInfo;
+  }
+  
   const taiexInfo = indexData.taiex;
   const nasdaqInfo = indexData.nasdaq;
   
-  // 2. Scrape individual stocks
+  // 2. Fetch full TWSE stock list
+  twseStockList = await fetchTWSEList();
+  if (!twseStockList || twseStockList.length === 0) {
+    throw new Error("市場資料同步失敗，請檢查資料來源 (無法取得上市股票清單)");
+  }
+  
   const finalTwList: any[] = [];
-  const finalUsList: any[] = [];
+  const rsScoreMap: Record<string, number> = {};
   
-  const allTickers = [
-    ...TW_TICKERS.map(t => ({ ...t, isTW: true, market: "上市" })),
-    ...US_TICKERS.map(t => ({ ...t, isTW: false, market: "NASDAQ" }))
-  ];
+  // 3. Scan all 1000+ TWSE stocks
+  console.log(`[Market Sync] Scanning ${twseStockList.length} TWSE stocks...`);
   
-  for (const item of allTickers) {
-    // Soft spacer delay to remain extremely polite to failover APIs
-    await new Promise((resolve) => setTimeout(resolve, 150));
+  // Priority handle for 2330 and common leaders
+  const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669"];
+  
+  const chunkSize = 8;
+  for (let i = 0; i < twseStockList.length; i += chunkSize) {
+    const chunk = twseStockList.slice(i, i + chunkSize);
+    const results = await Promise.all(chunk.map(async (item) => {
+      // Gentle pacing - increased delay slightly to avoid rate limit
+      await new Promise(r => setTimeout(r, Math.random() * 300 + 100));
+      const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+      return { item, klines };
+    }));
+
+    for (const { item, klines } of results) {
+      if (!klines || klines.length < 150) {
+        if (priorityTickers.includes(item.ticker)) {
+           console.warn(`[Market Sync Priority Warning] Ticker ${item.ticker} (${item.name}) failed fetch or has insufficient data (${klines?.length || 0} bars).`);
+        }
+        continue;
+      }
+      
+      const last = klines[klines.length - 1].close;
+      // RS Score calculation (Weighted Return over multiple periods)
+      const getReturn = (days: number) => {
+        if (klines.length <= days) return 0;
+        const prev = klines[klines.length - days].close;
+        return (last - prev) / prev;
+      };
+      
+      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+      rsScoreMap[item.ticker] = rsScore;
+      
+      finalTwList.push({ ...item, klines });
+    }
     
-    const { klines, isMock } = await fetchStockKLines(item.ticker, item.isTW, item.name);
+    if (i % 25 === 0 && i > 0) {
+      console.log(`[Market Sync Progress] ${i}/${twseStockList.length} stocks processed. Valid: ${finalTwList.length}`);
+    }
+  }
+
+  // 4. Calculate RS Ranking (Percentile 1-99)
+  console.log(`[Market Sync] Calculating RS Ranking for ${finalTwList.length} active stocks...`);
+  // Add indices to calculate relative strength against market
+  const sortedByRS = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+  const rankedTwList: any[] = [];
+
+  for (const stockData of finalTwList) {
+    const rankIndex = sortedByRS.indexOf(stockData.ticker);
+    const rsRanking = Math.floor((rankIndex / Math.max(1, sortedByRS.length)) * 99) + 1;
     
+    // Improved Classification logic for industries - Unify and ensure completeness
+    let industryGroup = "其他";
+    const nCap = stockData.name.toUpperCase();
+    const indRaw = (stockData.industry || "").toUpperCase();
+    
+    if (nCap.includes("伺服器") || nCap.includes("廣達") || nCap.includes("緯穎") || nCap.includes("緯創") || nCap.includes("技嘉") || nCap.includes("勤誠") || nCap.includes("川湖") || nCap.includes("營邦")) {
+       industryGroup = "AI 伺服器";
+    } else if (nCap.includes("欣興") || nCap.includes("南電") || nCap.includes("景碩") || nCap.includes("臻鼎") || nCap.includes("健鼎") || nCap.includes("台光電") || nCap.includes("金像電")) {
+       industryGroup = "PCB / ABF";
+    } else if (nCap.includes("散熱") || nCap.includes("雙鴻") || nCap.includes("奇鋐") || nCap.includes("建準") || nCap.includes("力致")) {
+       industryGroup = "散熱";
+    } else if (nCap.includes("電源") || nCap.includes("台達電") || nCap.includes("光寶科") || nCap.includes("康舒") || nCap.includes("全漢")) {
+       industryGroup = "電源 / 功率半導體";
+    } else if (indRaw.includes("半導體") || nCap.includes("台積電") || nCap.includes("聯電") || nCap.includes("日月光") || nCap.includes("創意") || nCap.includes("世芯") || nCap.includes("智原")) {
+       industryGroup = "半導體";
+    } else if (indRaw.includes("電腦") || indRaw.includes("電子")) {
+       industryGroup = "電子類";
+    } else if (indRaw.includes("金融") || indRaw.includes("保險")) {
+       industryGroup = "金融類";
+    } else if (indRaw.includes("水泥") || indRaw.includes("鋼鐵") || indRaw.includes("塑膠") || indRaw.includes("航運")) {
+       industryGroup = "傳產類";
+    }
+
     const analyzed = computeStockAnalysis(
-      item.ticker,
-      item.name,
-      item.market,
-      item.isTW ? "TW" : "US",
-      klines,
-      item.rs,
-      (item as any).mainIndustry,
-      (item as any).subIndustry
+      stockData.ticker,
+      stockData.name,
+      "上市",
+      "TW",
+      stockData.klines,
+      rsRanking,
+      industryGroup,
+      industryGroup 
     );
     
     if (analyzed) {
-      analyzed.isMock = isMock;
+      analyzed.isMock = false;
+      const trackerKey = stockData.ticker;
       
-      // Update persistent tracker & assign categories
-      const trackerKey = item.ticker.split(".")[0];
       if (Object.keys(watchlistTrackerRegistry).length === 0) {
         initializeWatchlistTracker();
       }
       
-      const meetsSEPA = analyzed.trendTemplate?.passed || analyzed.sepaScore?.total >= 70;
+      // Strict SEPA logic for Watchlist (RS > 70 and pass template OR RS > 85)
+      const meetsSEPA = (analyzed.trendTemplate?.passed && analyzed.rsRanking >= 70) || analyzed.rsRanking >= 85;
       let tracker = watchlistTrackerRegistry[trackerKey];
       if (!tracker) {
         tracker = {
@@ -1159,12 +1230,8 @@ async function performMarketSync(): Promise<boolean> {
           consecutiveDays: meetsSEPA ? 1 : 0
         };
       } else {
-        if (meetsSEPA) {
-          tracker.consecutiveDays += 1;
-        } else {
-          // Grace period: decay slowly so high-continuity stocks don't blink out instantly
-          tracker.consecutiveDays = Math.max(0, tracker.consecutiveDays - 1);
-        }
+        if (meetsSEPA) tracker.consecutiveDays += 1;
+        else tracker.consecutiveDays = Math.max(0, tracker.consecutiveDays - 1);
       }
       
       const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
@@ -1175,27 +1242,25 @@ async function performMarketSync(): Promise<boolean> {
       analyzed.consecutiveDays = tracker.consecutiveDays;
       analyzed.watchlistCategory = cat;
       analyzed.watchlistCategoryEn = catEn;
-
-      if (item.isTW) {
-        finalTwList.push(analyzed);
-      } else {
-        finalUsList.push(analyzed);
-      }
+      rankedTwList.push(analyzed);
     }
   }
   
-  // Save updated tracker state to disk
   saveWatchlistTrackerToDisk();
   
-  // Exclude stocks that do not meet the volume/price/days requirements immediately in the data ingestion stage
-  // Requirements:
-  // - Daily turnover amount (lastClose * volume) >= 300,000,000 TWD
-  // - Stock price >= 30 TWD
-  // - Recent 100+ days data complete
-  const checkedTwList = finalTwList.filter(stock => {
-    const passDays = stock.klines && stock.klines.length >= 50;
-    // Let all configured standard tickers pass through so client-side parameters can dynamically filter them
-    return passDays && stock.lastClose >= 5;
+  // Quality filters: Ensure long-term trend data and liquidity
+  const checkedTwList = rankedTwList.filter(stock => {
+    // Priority tickers (Index markers) are always included
+    if (priorityTickers.includes(stock.ticker)) return true;
+    
+    // Turnover > 40M TWD, Price > 12 TWD
+    const liquidityPass = stock.klines && stock.klines.length >= 160 && stock.lastClose >= 12;
+    const turnoverPass = (stock.lastClose * stock.avgVolume20 > 400000); 
+    
+    // Trend condition: Either strictly pass template (Stage 2) OR have elite RS ranking
+    const trendPass = (stock.trendTemplate?.passed) || stock.rsRanking >= 80;
+    
+    return liquidityPass && turnoverPass && trendPass;
   });
   
   const formatter = new Intl.DateTimeFormat("zh-TW", {
@@ -1222,12 +1287,12 @@ async function performMarketSync(): Promise<boolean> {
     taiex: taiexInfo,
     nasdaq: nasdaqInfo,
     twStocks: checkedTwList,
-    usStocks: finalUsList
+    usStocks: [],
+    stockPoolCount: twseStockList.length
   };
   
   saveCacheToFile();
-  
-  console.log(`[Market Sync Completed] Cleaned ${checkedTwList.length} TW stocks, ${finalUsList.length} US stocks. Last updated: ${formatTime}`);
+  console.log(`[Market Sync Completed] Cleaned ${checkedTwList.length} active stocks. Last updated: ${formatTime}`);
   return true;
 }
 
@@ -1254,8 +1319,8 @@ app.get("/api/market-data", async (req, res) => {
       debugNewCode: true
     });
   } catch (error: any) {
-    console.error("[CORS/API Blocked check] /api/market-data execution failed:", error.message || error);
-    res.status(500).json({ error: "API scraping error on Yahoo finance", details: error.message || error });
+    console.error("[Market Data Sync Error] /api/market-data failed:", error.message || error);
+    res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
   }
 });
 
@@ -1268,7 +1333,7 @@ app.post("/api/scan-market", async (req, res) => {
     res.json({ success: true, lastUpdated: marketDataCache?.lastUpdated, taiex: marketDataCache?.taiex });
   } catch (error: any) {
     console.error("[POST scan-market Error]", error.message || error);
-    res.status(500).json({ error: "Failed to force rescan market", details: error.message || error });
+    res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
   }
 });
 
@@ -1333,6 +1398,9 @@ Pivot 臨界買點價: ${stock.buyPoint}
 });
 
 async function startServer() {
+  // Pre-load market cache on boot
+  loadCacheFromFile();
+
   // Vite Integration for Development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

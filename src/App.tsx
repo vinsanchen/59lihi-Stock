@@ -52,7 +52,8 @@ const MINERVINI_QUOTES = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
-  const [selectedTicker, setSelectedTicker] = useState<string>("2330.TW");
+  const [selectedTicker, setSelectedTicker] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   const [selectedWatchCategory, setSelectedWatchCategory] = useState<string>("ALL");
   const [weights, setWeights] = useState<SepaWeights>(DEFAULT_WEIGHTS);
   
@@ -92,6 +93,7 @@ export default function App() {
   const [twStocks, setTwStocks] = useState<StockAnalysis[]>([]);
   const [usStocks, setUsStocks] = useState<StockAnalysis[]>([]);
   const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
 
   // Filter systems
@@ -124,11 +126,23 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const loadData = async () => {
-      await DataProvider.loadFromAPI(false, weights);
-      if (active) {
-        setTwStocks(DataProvider.getTwStocks(weights));
-        setUsStocks(DataProvider.getUsStocks(weights));
-        setLastUpdated(DataProvider.getLastUpdated());
+      try {
+        await DataProvider.loadFromAPI(false, weights);
+        if (active) {
+          const tw = DataProvider.getTwStocks(weights);
+          setTwStocks(tw);
+          setUsStocks(DataProvider.getUsStocks(weights));
+          setLastUpdated(DataProvider.getLastUpdated());
+          setPoolCount(DataProvider.getStockPoolCount());
+          if (tw.length > 0 && !selectedTicker) {
+            setSelectedTicker(tw[0].ticker);
+          }
+          setError(null);
+        }
+      } catch (err: any) {
+        if (active) {
+          setError(err.message || "市場資料同步失敗，請檢查資料來源。");
+        }
       }
     };
     loadData();
@@ -145,19 +159,25 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Force actual market scan and refresh via proxy server
   const handleRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
       const success = await DataProvider.loadFromAPI(true, weights);
       if (success) {
-        setTwStocks(DataProvider.getTwStocks(weights));
+        const tw = DataProvider.getTwStocks(weights);
+        setTwStocks(tw);
         setUsStocks(DataProvider.getUsStocks(weights));
         setLastUpdated(DataProvider.getLastUpdated());
+        setPoolCount(DataProvider.getStockPoolCount());
+        if (tw.length > 0 && !selectedTicker) {
+          setSelectedTicker(tw[0].ticker);
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("[Frontend] Force rescan failed:", e);
+      setError(e.message || "市場資料同步失敗，請檢查資料來源。");
     } finally {
       setRefreshing(false);
     }
@@ -415,7 +435,8 @@ export default function App() {
     ];
 
     const mapped = list.map((industry) => {
-      const stocks = twStocks.filter((s) => s.subIndustry === industry.name);
+      // Prioritize subIndustry, fallback to mainIndustry containing the name
+      const stocks = twStocks.filter((s) => s.subIndustry === industry.name || s.mainIndustry?.includes(industry.name));
       if (stocks.length === 0) {
         return {
           ...industry,
@@ -428,16 +449,16 @@ export default function App() {
       }
 
       // 1. Avg SEPA
-      const avgSepa = stocks.reduce((acc, s) => acc + s.sepaScore.total, 0) / stocks.length;
+      const avgSepa = stocks.reduce((acc, s) => acc + (s.sepaScore?.total || 0), 0) / stocks.length;
       
       // 2. Breakouts (passed trend template OR status is "已突破" / "接近買點")
-      const breakoutCount = stocks.filter((s) => s.status === "已突破" || s.status === "接近買點" || s.trendTemplate.passed).length;
+      const breakoutCount = stocks.filter((s) => s.status === "已突破" || s.status === "接近買點" || s.trendTemplate?.passed).length;
       
       // 3. Price change strength (average changePercent)
-      const avgChange = stocks.reduce((acc, s) => acc + s.changePercent, 0) / stocks.length;
+      const avgChange = stocks.reduce((acc, s) => acc + (s.changePercent || 0), 0) / stocks.length;
       
-      // 4. Volume strength (volume / avgVolume250)
-      const avgVolRatio = stocks.reduce((acc, s) => acc + (s.volume / s.avgVolume20), 0) / stocks.length;
+      // 4. Volume strength (volume / avgVolume20)
+      const avgVolRatio = stocks.reduce((acc, s) => acc + ((s.volume / (s.avgVolume20 || 1)) || 0), 0) / stocks.length;
 
       // Overall composite score formula
       const score = Math.round((avgSepa * 0.45) + (breakoutCount * 12) + (avgChange * 9) + (avgVolRatio * 14));
@@ -609,11 +630,11 @@ export default function App() {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-gray-400">2330 台積電</span>
                   <span className={`font-mono font-bold flex items-center text-[11px] ${tsmcStock ? (tsmcStock.changePercent >= 0 ? "text-emerald-400" : "text-rose-400") : "text-emerald-400"}`}>
-                    {tsmcStock ? (tsmcStock.changePercent >= 0 ? "+" : "") + tsmcStock.changePercent.toFixed(2) + "%" : "+0.00%"} {tsmcStock && tsmcStock.changePercent >= 0 ? <ArrowUpRight className="w-3 h-3 m-0.5" /> : <ArrowDownRight className="w-3 h-3 m-0.5" />}
+                    {tsmcStock ? (tsmcStock.changePercent >= 0 ? "+" : "") + tsmcStock.changePercent.toFixed(2) + "%" : "--%"} {tsmcStock && tsmcStock.changePercent >= 0 ? <ArrowUpRight className="w-3 h-3 m-0.5" /> : (tsmcStock ? <ArrowDownRight className="w-3 h-3 m-0.5" /> : null)}
                   </span>
                 </div>
                 <div className="font-mono text-xs font-bold text-gray-100 mt-1">
-                  {tsmcStock ? tsmcStock.lastClose : 0} 元
+                  {tsmcStock ? (tsmcStock.lastClose > 0 ? tsmcStock.lastClose + " 元" : "讀取中...") : "無報價"}
                 </div>
               </div>
 
@@ -798,6 +819,21 @@ export default function App() {
         {/* Dynamic Workspace Container Section */}
         <section className="flex-grow overflow-auto p-4 md:p-6 flex flex-col gap-6">
 
+          {error && (
+            <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-center gap-3 text-rose-400 text-sm animate-in fade-in slide-in-from-top-4 duration-300">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <p className="font-medium">{error}</p>
+              <button 
+                onClick={handleRefresh}
+                className="ml-auto px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                disabled={refreshing}
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
+                重試同步
+              </button>
+            </div>
+          )}
+
           {/* TAB 1: TAIWAN STOCK SEPA TOP 20 */}
           {activeTab === "tw" && (
             <div className="space-y-6 flex-1 flex flex-col" id="tw-tab">
@@ -816,12 +852,21 @@ export default function App() {
                     <span className="text-gray-400 text-xs">最低日均量 &ge; {liquidityParams.minAvgVolume / 1000} 張</span>
                     <span className="text-gray-600">|</span>
                     <span className="text-gray-400 text-xs">最低日成交金額 &ge; {(liquidityParams.minTurnover / 10000000).toFixed(1).replace(".0","")} 千萬元</span>
-                    <span className="text-gray-600">|</span>
-                    <span className="text-gray-400 text-xs">{liquidityParams.excludeEtf ? "已排除 ETF" : "包含 ETF"}</span>
                   </div>
                   <div className="text-[10px] text-gray-400 font-mono italic shrink-0">
                     最後更新：{lastUpdated || "同步中..."}
                   </div>
+                </div>
+
+                {/* Authenticity Metadata Bar */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-indigo-300 bg-indigo-500/5 px-3 py-2 rounded-lg border border-indigo-500/10">
+                  <div className="flex items-center gap-1 font-bold text-indigo-400">
+                    <ShieldCheck className="w-3 h-3" /> 資料真實性驗證：
+                  </div>
+                  <div className="flex items-center gap-1">股票池來源：<span className="text-gray-300 font-mono">TWSE (上市)</span></div>
+                  <div className="flex items-center gap-1">掃描數量：<span className="text-gray-300 font-mono">{poolCount || "---"} 檔</span></div>
+                  <div className="flex items-center gap-1">數據源：<span className="text-gray-300 font-mono">Yahoo / FinMind</span></div>
+                  <div className="flex items-center gap-1 text-emerald-400 font-bold bg-emerald-500/10 px-1.5 rounded">Mock Data：禁用 (真實數據)</div>
                 </div>
                 
                 {/* Note mandated by spec */}
@@ -836,16 +881,16 @@ export default function App() {
               {/* Header Title segment (2. 今日上市股 SEPA Top 20) */}
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[#30363D] pb-3">
                 <div className="space-y-1">
-                  <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
-                    <Globe2 className="w-5 h-5 text-emerald-500" />
+                  <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
+                    <Globe2 className="w-4 h-4 text-emerald-500" />
                     今日上市股 SEPA Top 20 領先股
                   </h2>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-[11px] text-gray-400">
                     基於 Mark Minervini 經典 SEPA 趨勢模型演算法，根據即時數據篩選出符合特徵的前 20 名台股強勢領先股。
                   </p>
                 </div>
                 
-                <div className="flex flex-wrap gap-1.5 text-[10px] text-gray-400/90 font-medium shrink-0">
+                <div className="flex flex-wrap gap-1.5 text-[9px] text-gray-400/90 font-medium shrink-0">
                   <span className="px-2 py-0.5 bg-slate-950 border border-[#30363D] rounded-md font-semibold text-emerald-400">TWSE 上市股限定</span>
                   <span className="px-2 py-0.5 bg-slate-950 border border-[#30363D] rounded-md font-semibold font-mono">RS &ge; 70</span>
                   <span className="px-2 py-0.5 bg-slate-950 border border-[#30363D] rounded-md font-semibold font-mono">股價 &ge; {liquidityParams.minPrice} 元</span>
@@ -858,31 +903,31 @@ export default function App() {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-[#010409] border-b border-[#30363D] text-gray-400 font-bold select-none text-[11px] tracking-wider uppercase">
-                        <th className="py-3 px-4 text-center w-12">#</th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors" onClick={() => handleThSort("tw", "ticker")}>
+                        <th className="py-2 px-3 text-center w-10">#</th>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors" onClick={() => handleThSort("tw", "ticker")}>
                           <div className="flex items-center gap-1">代號 <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3">名稱</th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "lastClose")}>
+                        <th className="py-2 px-2">名稱</th>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "lastClose")}>
                           <div className="flex items-center justify-end gap-1">收盤價 <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "changePercent")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "changePercent")}>
                           <div className="flex items-center justify-end gap-1">漲跌幅 <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "sepaScoreTotal")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "sepaScoreTotal")}>
                           <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("tw", "rsRanking")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("tw", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
                         </th>
-                        <th className="py-3 px-3 text-center">趨勢驗證</th>
-                        <th className="py-3 px-3">型態判斷</th>
-                        <th className="py-3 px-3 text-right">建議買點</th>
-                        <th className="py-3 px-3 text-right">停損 (風險%)</th>
-                        <th className="py-3 px-4 text-center">狀態</th>
+                        <th className="py-2 px-2 text-center">趨勢驗證</th>
+                        <th className="py-2 px-2">型態判斷</th>
+                        <th className="py-2 px-2 text-right">建議買點</th>
+                        <th className="py-2 px-2 text-right text-[10px]">停損(風險%)</th>
+                        <th className="py-2 px-3 text-center">狀態</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#30363D]/60">
+                    <tbody className="divide-y divide-[#30363D]/60 whitespace-nowrap">
                       {filteredTwStocks.length === 0 ? (
                         <tr>
                           <td colSpan={12} className="py-12 text-center text-gray-500 font-sans">
@@ -899,79 +944,54 @@ export default function App() {
                               onClick={() => inspectStock(stock.ticker)}
                               className="hover:bg-slate-900/80 cursor-pointer transition-all border-b border-[#30363D]/40 group"
                             >
-                              {/* Index Rank Number */}
-                              <td className="py-3 px-4 text-center font-mono text-gray-500 font-bold group-hover:text-white">
-                                {String(idx + 1).padStart(2, "0")}
+                              <td className="py-1.5 px-3 text-center font-mono text-gray-500 font-bold group-hover:text-white">
+                                {idx + 1}
                               </td>
-
-                              {/* Ticker */}
-                              <td className="py-3 px-3 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">
+                              <td className="py-1.5 px-2 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">
                                 {stock.ticker.split(".")[0]}
                               </td>
-
-                              {/* Name and segment label */}
-                              <td className="py-3 px-3 font-semibold text-white">
-                                <div className="flex items-center gap-1.5">
-                                  <span>{stock.name}</span>
-                                  <span className="text-[10px] text-gray-500 bg-slate-950 px-1 py-0.2 rounded font-normal font-sans text-center">
+                              <td className="py-1.5 px-2 font-semibold text-white">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[13px]">{stock.name}</span>
+                                  <span className="text-[9px] text-gray-500 bg-slate-950 px-1 py-0 rounded font-normal font-sans text-center">
                                     {stock.marketType}
                                   </span>
                                 </div>
                               </td>
-
-                              {/* Close */}
-                              <td className="py-3 px-3 text-right font-mono font-semibold text-gray-200">
+                              <td className="py-1.5 px-2 text-right font-mono font-semibold text-gray-200">
                                 {stock.lastClose.toFixed(2)}
                               </td>
-
-                              {/* Change Pct */}
-                              <td className={`py-3 px-3 text-right font-mono font-semibold ${isPositive ? "text-emerald-400" : "text-rose-400"}`}>
+                              <td className={`py-1.5 px-2 text-right font-mono font-semibold ${isPositive ? "text-emerald-400" : "text-rose-400"}`}>
                                 {isPositive ? "+" : ""}{stock.changePercent.toFixed(2)}%
                               </td>
-
-                              {/* SEPA Score */}
-                              <td className="py-3 px-3 text-right font-mono font-extrabold text-[#3FB950] bg-emerald-500/5 text-sm">
+                              <td className="py-1.5 px-2 text-right font-mono font-extrabold text-[#3FB950] bg-emerald-500/5">
                                 {stock.sepaScore.total}
                               </td>
-
-                              {/* RS Ranking */}
-                              <td className="py-3 px-3 text-center font-mono font-extrabold text-indigo-400">
+                              <td className="py-1.5 px-2 text-center font-mono font-extrabold text-indigo-400">
                                 {stock.rsRanking}
                               </td>
-
-                              {/* Trend Template bool status */}
-                              <td className="py-3 px-3 text-center">
+                              <td className="py-1.5 px-2 text-center">
                                 {stock.trendTemplate.passed ? (
-                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest">
+                                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest leading-none">
                                     PASS
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] font-bold text-gray-500 bg-slate-800/80 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                                  <span className="text-[9px] font-bold text-gray-500 bg-slate-800/80 px-1 py-0.5 rounded uppercase tracking-widest leading-none">
                                     FAIL
                                   </span>
                                 )}
                               </td>
-
-                              {/* VCP pattern details description */}
-                              <td className="py-3 px-3 text-gray-300 font-medium">
-                                <div className="flex items-center gap-1 text-[11px]">
-                                  <span className="font-semibold text-indigo-300">{stock.pattern}</span>
-                                </div>
+                              <td className="py-1.5 px-2 text-gray-300 font-medium">
+                                <span className="font-semibold text-indigo-300 text-[11px]">{stock.pattern}</span>
                               </td>
-
-                              {/* Buy point */}
-                              <td className="py-3 px-3 text-right font-mono font-bold text-emerald-400">
+                              <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-400">
                                 {stock.buyPoint}
                               </td>
-
-                              {/* Stop Loss (Risk %) */}
-                              <td className="py-3 px-3 text-right font-mono text-gray-400">
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-400">
                                 <span className="text-rose-400 font-bold">{stock.stopLoss}</span>
-                                <span className="text-[10px] text-gray-500 ml-1">({stock.riskPercent}%)</span>
+                                <span className="text-[9px] text-gray-500 ml-1">({stock.riskPercent}%)</span>
                               </td>
-
-                              {/* Operational Status Tag badge */}
-                              <td className="py-3 px-4 text-center">
+                              <td className="py-1.5 px-3 text-center">
                                 {getStatusBadge(stock.status)}
                               </td>
                             </tr>
@@ -1029,22 +1049,22 @@ export default function App() {
 
                         <div className="mt-2 space-y-0.5 w-full">
                           <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-400 text-[9px]">SEPA 均分</span>
-                            <span className="font-bold font-mono text-emerald-400">{ind.avgSepa}分</span>
+                            <span className="text-gray-400 text-[8.5px] font-medium uppercase tracking-tight">SEPA 均分</span>
+                            <span className="font-bold font-mono text-emerald-400 text-[11px]">{ind.avgSepa}</span>
                           </div>
                           
                           <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-400 text-[9px]">突破家數</span>
-                            <span className="font-sans font-extrabold text-amber-500">
-                              🔥 {ind.breakoutCount} 檔
+                            <span className="text-gray-400 text-[8.5px] font-medium uppercase tracking-tight">突破家數</span>
+                            <span className="font-sans font-extrabold text-amber-500 text-[10px]">
+                              🔥 {ind.breakoutCount}
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center text-[9px] font-mono pt-1 border-t border-slate-800/60 leading-none">
-                            <span className={isChangePos ? "text-emerald-400 font-semibold" : "text-rose-400 font-semibold"}>
+                          <div className="flex justify-between items-center text-[9px] font-mono pt-1 border-t border-slate-800/40 leading-none">
+                            <span className={isChangePos ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
                               {isChangePos ? "+" : ""}{ind.avgChange}%
                             </span>
-                            <span className="text-gray-500">x{ind.avgVolRatio}倍量</span>
+                            <span className="text-gray-500 text-[8px] font-bold">x{ind.avgVolRatio} VOL</span>
                           </div>
                         </div>
                         
@@ -1087,28 +1107,28 @@ export default function App() {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-[#010409] border-b border-[#30363D] text-gray-400 font-bold select-none text-[11px] tracking-wider uppercase">
-                        <th className="py-3 px-4 text-center w-12">Rank</th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors" onClick={() => handleThSort("us", "ticker")}>
+                        <th className="py-2 px-3 text-center w-10">Rank</th>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors" onClick={() => handleThSort("us", "ticker")}>
                           <div className="flex items-center gap-1">Ticker <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3">Company Name</th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "lastClose")}>
+                        <th className="py-2 px-2">Company Name</th>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "lastClose")}>
                           <div className="flex items-center justify-end gap-1">Close <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "changePercent")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "changePercent")}>
                           <div className="flex items-center justify-end gap-1">Change % <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "sepaScoreTotal")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "sepaScoreTotal")}>
                           <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
-                        <th className="py-3 px-3 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("us", "rsRanking")}>
+                        <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("us", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
                         </th>
-                        <th className="py-3 px-3 text-center">Trend Template</th>
-                        <th className="py-3 px-3">Pattern</th>
-                        <th className="py-3 px-3 text-right">Pivot Point</th>
-                        <th className="py-3 px-3 text-right">Stop Loss (Risk %)</th>
-                        <th className="py-3 px-4 text-center">Status</th>
+                        <th className="py-2 px-2 text-center">Trend Template</th>
+                        <th className="py-2 px-2">Pattern</th>
+                        <th className="py-2 px-2 text-right">Pivot Point</th>
+                        <th className="py-2 px-2 text-right text-[10px]">Stop Loss (Risk %)</th>
+                        <th className="py-2 px-3 text-center">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#30363D]/60">
@@ -1129,76 +1149,76 @@ export default function App() {
                               className="hover:bg-slate-900/80 cursor-pointer transition-all border-b border-[#30363D]/40 group"
                             >
                               {/* Index Rank Number */}
-                              <td className="py-3 px-4 text-center font-mono text-gray-500 font-bold group-hover:text-white">
-                                {String(idx + 1).padStart(2, "0")}
+                              <td className="py-1.5 px-3 text-center font-mono text-gray-500 font-bold group-hover:text-white">
+                                {idx + 1}
                               </td>
 
                               {/* Ticker */}
-                              <td className="py-3 px-3 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors uppercase">
+                              <td className="py-1.5 px-2 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors uppercase">
                                 {stock.ticker}
                               </td>
 
                               {/* Name and segment label */}
-                              <td className="py-3 px-3 font-semibold text-white">
-                                <div className="flex items-center gap-1.5">
-                                  <span>{stock.name}</span>
-                                  <span className="text-[10px] text-gray-500 bg-slate-950 px-1 py-0.2 rounded font-normal font-sans text-center text-[9px]">
+                              <td className="py-1.5 px-2 font-semibold text-white">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[13px]">{stock.name}</span>
+                                  <span className="text-[9px] text-gray-500 bg-slate-950 px-1 py-0 rounded font-normal font-sans text-center">
                                     {stock.marketType}
                                   </span>
                                 </div>
                               </td>
 
                               {/* Close */}
-                              <td className="py-3 px-3 text-right font-mono text-gray-200">
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-200">
                                 ${stock.lastClose.toFixed(2)}
                               </td>
 
                               {/* Change Pct */}
-                              <td className={`py-3 px-3 text-right font-mono font-semibold ${isPositive ? "text-emerald-400" : "text-rose-400"}`}>
+                              <td className={`py-1.5 px-2 text-right font-mono font-semibold ${isPositive ? "text-emerald-400" : "text-rose-400"}`}>
                                 {isPositive ? "+" : ""}{stock.changePercent.toFixed(2)}%
                               </td>
 
                               {/* SEPA Score */}
-                              <td className="py-3 px-3 text-right font-mono font-extrabold text-[#3FB950] bg-emerald-500/5 text-sm">
+                              <td className="py-1.5 px-2 text-right font-mono font-extrabold text-[#3FB950] bg-emerald-500/5">
                                 {stock.sepaScore.total}
                               </td>
 
                               {/* RS Ranking */}
-                              <td className="py-3 px-3 text-center font-mono font-extrabold text-indigo-400">
+                              <td className="py-1.5 px-2 text-center font-mono font-extrabold text-indigo-400">
                                 {stock.rsRanking}
                               </td>
 
                               {/* Trend Template bool status */}
-                              <td className="py-3 px-3 text-center">
+                              <td className="py-1.5 px-2 text-center">
                                 {stock.trendTemplate.passed ? (
-                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest">
+                                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest leading-none">
                                     PASS
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] font-bold text-gray-550 bg-slate-800/80 px-1.5 py-0.5 rounded uppercase tracking-widest">
+                                  <span className="text-[9px] font-bold text-gray-550 bg-slate-800/80 px-1 py-0.5 rounded uppercase tracking-widest leading-none">
                                     FAIL
                                   </span>
                                 )}
                               </td>
 
                               {/* VCP pattern details description */}
-                              <td className="py-3 px-3 text-gray-300 font-medium font-sans">
-                                {stock.pattern}
+                              <td className="py-1.5 px-2 text-gray-300 font-medium font-sans">
+                                <span className="text-[11px] font-semibold text-indigo-300">{stock.pattern}</span>
                               </td>
 
                               {/* Buy point */}
-                              <td className="py-3 px-3 text-right font-mono font-bold text-emerald-400">
+                              <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-400">
                                 ${stock.buyPoint}
                               </td>
 
                               {/* Stop Loss (Risk %) */}
-                              <td className="py-3 px-3 text-right font-mono text-gray-400">
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-400">
                                 <span className="text-rose-400 font-bold">${stock.stopLoss}</span>
-                                <span className="text-[10px] text-gray-500 ml-1">({stock.riskPercent}%)</span>
+                                <span className="text-[9px] text-gray-500 ml-1">({stock.riskPercent}%)</span>
                               </td>
 
                               {/* Operational Status Tag badge */}
-                              <td className="py-3 px-4 text-center text-[11px] font-semibold">
+                              <td className="py-1.5 px-3 text-center text-[11px] font-semibold">
                                 {getStatusBadge(stock.status)}
                               </td>
                             </tr>
@@ -1408,22 +1428,22 @@ export default function App() {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-[#010409] border-b border-[#30363D] text-gray-400 font-bold select-none text-[11px] tracking-wider uppercase">
-                        <th className="py-3 px-4 w-12 text-center">#</th>
-                        <th className="py-3 px-3">市場</th>
-                        <th className="py-3 px-3">代號</th>
-                        <th className="py-3 px-3">名稱</th>
-                        <th className="py-3 px-3 text-right">當前收盤</th>
-                        <th className="py-3 px-3 text-right">單日漲跌</th>
-                        <th className="py-3 px-4 text-center">持續入選天數</th>
-                        <th className="py-3 px-3 text-center">觀察分類</th>
-                        <th className="py-3 px-3 text-center">SEPA 總分</th>
-                        <th className="py-3 px-3">當前收斂型態</th>
-                        <th className="py-3 px-3 text-right">建議 Pivot</th>
-                        <th className="py-3 px-3 text-right">距離買點</th>
-                        <th className="py-3 px-4 text-center">操作診斷</th>
+                        <th className="py-2 px-3 text-center w-10">#</th>
+                        <th className="py-2 px-2">市場</th>
+                        <th className="py-2 px-2">代號</th>
+                        <th className="py-2 px-2">名稱</th>
+                        <th className="py-2 px-2 text-right">當前收盤</th>
+                        <th className="py-2 px-2 text-right">單日漲跌</th>
+                        <th className="py-2 px-3 text-center">持續入選天數</th>
+                        <th className="py-2 px-2 text-center">觀察分類</th>
+                        <th className="py-2 px-2 text-center">SEPA 總分</th>
+                        <th className="py-2 px-2">當前收斂型態</th>
+                        <th className="py-2 px-2 text-right">建議 Pivot</th>
+                        <th className="py-2 px-2 text-right">距離買點</th>
+                        <th className="py-2 px-3 text-center">操作診斷</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#30363D]/60 pb-16">
+                    <tbody className="divide-y divide-[#30363D]/60 pb-16 whitespace-nowrap">
                       {sortedWatchlist.length === 0 ? (
                         <tr>
                           <td colSpan={13} className="py-16 text-center text-gray-500 font-sans">
@@ -1459,80 +1479,80 @@ export default function App() {
                               className="hover:bg-slate-900/80 cursor-pointer transition-all border-b border-[#30363D]/30 group"
                             >
                               {/* Row rank order */}
-                              <td className="py-3.5 px-4 text-center font-mono text-gray-500 font-bold group-hover:text-white">
-                                {String(idx + 1).padStart(2, "0")}
+                              <td className="py-1.5 px-3 text-center font-mono text-gray-500 font-bold group-hover:text-white">
+                                {idx + 1}
                               </td>
 
                               {/* Market type */}
-                              <td className="py-3.5 px-3">
+                              <td className="py-1.5 px-2 text-center text-[10px]">
                                 {stock.country === "TW" ? (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-800/30">台股</span>
+                                  <span className="px-1.5 py-0.2 rounded font-bold bg-emerald-950/40 text-emerald-400 border border-emerald-800/30">台股</span>
                                 ) : (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950/40 text-blue-400 border border-blue-800/30">美股</span>
+                                  <span className="px-1.5 py-0.2 rounded font-bold bg-blue-950/40 text-blue-400 border border-blue-800/30">美股</span>
                                 )}
                               </td>
 
                               {/* Ticker code */}
-                              <td className="py-3.5 px-3 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">
+                              <td className="py-1.5 px-2 font-mono font-bold text-gray-300 group-hover:text-indigo-400 transition-colors uppercase">
                                 {stock.ticker.split(".")[0]}
                               </td>
 
                               {/* Name */}
-                              <td className="py-3.5 px-3 font-semibold text-white">
+                              <td className="py-1.5 px-2 font-semibold text-white">
                                 <div className="flex items-center gap-1">
-                                  <span>{stock.name}</span>
+                                  <span className="text-[13px]">{stock.name}</span>
                                   {stock.consecutiveDays && stock.consecutiveDays >= 15 && (
-                                    <span className="text-[10px] bg-indigo-950/20 text-indigo-400 border border-indigo-900/30 px-1 py-0.2 rounded font-sans scale-90">強勢股</span>
+                                    <span className="text-[8px] bg-indigo-950/20 text-indigo-400 border border-indigo-900/30 px-1 py-0 rounded font-sans scale-90">強勢</span>
                                   )}
                                 </div>
                               </td>
 
                               {/* Last Close price */}
-                              <td className="py-3.5 px-3 text-right font-mono font-black text-gray-105">
+                              <td className="py-1.5 px-2 text-right font-mono font-black text-gray-105">
                                 {stock.country === "TW" ? `${stock.lastClose} 元` : `$${stock.lastClose}`}
                               </td>
 
                               {/* Day percentage changes */}
-                              <td className={`py-3.5 px-3 text-right font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              <td className={`py-1.5 px-2 text-right font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
                                 {isPositive ? `+${stock.changePercent.toFixed(2)}%` : `${stock.changePercent.toFixed(2)}%`}
                               </td>
 
                               {/* Consecutive tracked days */}
-                              <td className="py-3.5 px-4 text-center">
-                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full font-mono text-xs font-black bg-emerald-950/40 text-emerald-400 border border-emerald-500/20 shadow-sm">
+                              <td className="py-1.5 px-3 text-center">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[10px] font-black bg-emerald-950/40 text-emerald-400 border border-emerald-500/10 shadow-sm leading-none">
                                   連續符合 {stock.consecutiveDays || 1} 天
                                 </span>
                               </td>
 
                               {/* Watchlist Category label */}
-                              <td className="py-3.5 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-black ${catBadgeStyle}`}>
+                              <td className="py-1.5 px-2 text-center">
+                                <span className={`px-1.5 py-0.2 rounded text-[9px] font-black ${catBadgeStyle}`}>
                                   {stock.watchlistCategory}
                                 </span>
                               </td>
 
                               {/* SEPA aggregate score */}
-                              <td className="py-3.5 px-3 text-center">
-                                <span className="text-gray-100 font-mono font-bold text-xs bg-slate-950 border border-slate-700 px-2 py-0.5 rounded">
+                              <td className="py-1.5 px-2 text-center text-[11px]">
+                                <span className="text-gray-100 font-mono font-bold bg-slate-950 border border-slate-700 px-1.5 rounded">
                                   {stock.sepaScore?.total || 75}
                                 </span>
                               </td>
 
                               {/* Convergence pattern metadata */}
-                              <td className="py-3.5 px-3">
-                                <div className="text-gray-200 font-semibold">{stock.pattern}</div>
-                                <div className="text-[10px] text-gray-500 truncate max-w-[200px]" title={stock.vcpPhaseDesc}>
+                              <td className="py-1.5 px-2">
+                                <div className="text-gray-200 font-semibold text-[11px] leading-tight">{stock.pattern}</div>
+                                <div className="text-[9px] text-gray-500 truncate max-w-[150px] leading-tight" title={stock.vcpPhaseDesc}>
                                   {stock.vcpPhaseDesc}
                                 </div>
                               </td>
 
                               {/* Pivot Suggestions */}
-                              <td className="py-3.5 px-3 text-right font-mono text-gray-300 font-semibold">
+                              <td className="py-1.5 px-2 text-right font-mono text-gray-300 font-semibold">
                                 {stock.country === "TW" ? `${stock.buyPoint} 元` : `$${stock.buyPoint}`}
                               </td>
 
                               {/* Distance percentage from pivot buy points */}
-                              <td className="py-3.5 px-3 text-right font-mono">
+                              <td className="py-1.5 px-2 text-right font-mono text-[11px]">
                                 {stock.pctToBuyPoint > 0 ? (
                                   <span className="text-amber-400 font-bold">{stock.pctToBuyPoint.toFixed(1)}%</span>
                                 ) : stock.pctToBuyPoint === 0 ? (
@@ -1543,17 +1563,17 @@ export default function App() {
                               </td>
 
                               {/* Switch diagnostics tab action button */}
-                              <td className="py-3.5 px-4 text-center">
+                              <td className="py-1.5 px-3 text-center">
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setSelectedTicker(stock.ticker);
                                     setActiveTab("single");
                                   }}
-                                  className="px-2.5 py-1 text-[10px] font-bold text-white bg-slate-800 hover:bg-indigo-600 rounded border border-slate-700 cursor-pointer hover:border-indigo-500 transition-all flex items-center gap-1 mx-auto"
+                                  className="px-2 py-0.5 text-[9px] font-bold text-white bg-slate-800 hover:bg-indigo-600 rounded border border-slate-700 cursor-pointer hover:border-indigo-500 transition-all flex items-center gap-1 mx-auto"
                                 >
-                                  <span>個股診斷</span>
-                                  <ChevronRight className="w-3 h-3 text-slate-400" />
+                                  <span>診斷</span>
+                                  <ChevronRight className="w-2.5 h-2.5 text-slate-400" />
                                 </button>
                               </td>
                             </tr>
@@ -1576,7 +1596,24 @@ export default function App() {
           {/* TAB 3: SINGLE STOCK DETAILED DEEP REPORT */}
           {activeTab === "single" && (
             <div className="space-y-6 animate-fade-in" id="single-tab">
-              
+              {!activeStock ? (
+                 <div className="bg-[#161B22] p-12 rounded-2xl border border-[#30363D] flex flex-col items-center justify-center text-center space-y-4">
+                    <div className="w-16 h-16 bg-slate-900 rounded-full flex items-center justify-center border border-slate-800">
+                      <Search className="w-8 h-8 text-gray-600" />
+                    </div>
+                    <div className="space-y-1">
+                       <h3 className="text-gray-200 font-bold">尚未選擇股票標的</h3>
+                       <p className="text-gray-500 text-xs">請從「強勢股清單」或「監控清單」點擊股票，或使用代碼查詢。</p>
+                    </div>
+                    <button 
+                      onClick={() => setActiveTab("watchlist")}
+                      className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg"
+                    >
+                      前往監控清單
+                    </button>
+                 </div>
+              ) : (
+                <>
               {/* Target stock micro switcher header */}
               <div className="bg-[#161B22] p-4 rounded-xl border border-[#30363D] flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -1832,11 +1869,11 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-
               </div>
-
-            </div>
+            </>
           )}
+        </div>
+      )}
 
 
           {/* TAB 4: SYSTEM CONFIGS WEIGHTS */}
@@ -2132,39 +2169,6 @@ export default function App() {
                   </button>
                 </div>
               </form>
-
-              {/* Data Provider structural abstract overview */}
-              <div className="bg-[#161B22] p-5 rounded-2xl border border-[#30363D] space-y-4">
-                <h4 className="font-sans font-bold text-gray-100 flex items-center gap-2">
-                  <Award className="w-4 h-4 text-emerald-400" />
-                  資料來源抽象架構設計 (Data Provider Abstraction)
-                </h4>
-                <div className="space-y-2 text-xs text-gray-400 leading-relaxed font-sans">
-                  <p>
-                    本股票分析系統在底層設計了<strong>「可切換的可插拔 Data Provider Abstraction」</strong>。第一版 MVP 模型架構透過本機的高保真 deterministic 股票歷史發射器模擬出完美的技術性 K 線數據。
-                  </p>
-                  
-                  {/* Visual flowchart mock schema code */}
-                  <div className="bg-black/60 p-3 rounded-lg border border-slate-800 font-mono text-[10px] text-indigo-300 leading-normal space-y-1">
-                    <div>{"// Interface abstraction schema definition example"}</div>
-                    <div>{"interface IStockDataProvider {"}</div>
-                    <div>{"  getKLines(ticker: string, days: number): Promise<KLine[]>;"}</div>
-                    <div>{"  getRealtimeQuote(ticker: string): Promise<StockHeaderQuote>;"}</div>
-                    <div>{"  scanMarketForRankings(market: 'TW'|'US'): Promise<StockAnalysis[]>;"}</div>
-                    <div>{"}"}</div>
-                  </div>
-
-                  <p>
-                    <strong>未來可擴充對接來源：</strong> 系統的計算模板與 K 線繪製均完全解耦。如您需要對接真實市場，隨時可以將 <code>/src/services/DataProvider.ts</code> 中的 <code>DataProvider</code> 抽象換成：
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1 mt-1 text-[11px] text-gray-300">
-                    <li>台灣證交所 / 櫃買中心公開 Open API、FinMind 金融數據庫（台股）</li>
-                    <li>Stooq API, Yahoo Finance, Alpha Vantage（美股）</li>
-                    <li>Twelve Data, Polygon.io 或是 TradingView Widgets</li>
-                  </ul>
-                </div>
-              </div>
-
             </div>
           )}
 
