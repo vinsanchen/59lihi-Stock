@@ -293,7 +293,7 @@ function detectProfile(
   const ma50 = klines[klines.length - 1].ma50 || lastClose;
   const ma200 = klines[klines.length - 1].ma200 || lastClose;
   
-  if (lastClose < ma200 || trendPassedCount <= 3) {
+  if (lastClose < ma200 || trendPassedCount <= 5) {
     return "downtrend";
   }
   if (lastClose > ma50 * 1.18) {
@@ -501,10 +501,16 @@ function computeStockAnalysis(
   }
 
   // Pivot locking logic
-  const breakdown = ma200 !== null && lastClose < ma200;
+  const isBelow200MA = ma200 !== null && lastClose < ma200;
+  const isBelow50MA = ma50 !== null && lastClose < ma50;
+  const isBelowPivotArea = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.95;
   const patternFailed = profile === 'downtrend' || profile === 'overextended';
+  const wasBreakout = previousAnalysis?.statusEn === 'Breakout';
+  const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout;
   
-  if (previousAnalysis && previousAnalysis.buyPoint && !breakdown && !patternFailed && previousAnalysis.status !== '不符合') {
+  const mustReset = isBelow200MA || isBelow50MA || isBelowPivotArea || patternFailed || isNewBasePattern;
+  
+  if (previousAnalysis && previousAnalysis.buyPoint && !mustReset && previousAnalysis.status !== '不符合') {
       pivotPrice = previousAnalysis.buyPoint;
       originalPivot = previousAnalysis.originalPivot || previousAnalysis.buyPoint;
       pivotCreationDate = previousAnalysis.pivotCreationDate || pivotCreationDate;
@@ -513,6 +519,7 @@ function computeStockAnalysis(
   } else {
       pivotPrice = calculatedPivot;
       originalPivot = calculatedPivot;
+      pivotCreationDate = new Date().toISOString().split('T')[0];
       pivotStatus = 'Active';
       isNewBase = true;
   }
@@ -726,12 +733,12 @@ async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true, 
     
     // For critical indices, prioritize retry with query1 
     if (useQuery2) {
-      await new Promise(r => setTimeout(r, (isIndex || isPriority) ? 500 : 100));
+      await new Promise(r => setTimeout(r, (isIndex || isPriority) ? 2000 : 1000));
       return getYahooChartData(ticker, retries, false, isPriority);
     }
     
     if (retries > 0) {
-      const waitTime = (isIndex || isPriority ? 1000 : 200) * (2 - retries);
+      const waitTime = (isIndex || isPriority ? 5000 : 3000) * (2 - retries + 1);
       console.log(`[Retrying] Ticker: ${ticker}, remaining retries: ${retries}, waiting ${waitTime}ms...`);
       await new Promise(r => setTimeout(r, waitTime));
       return getYahooChartData(ticker, retries - 1, true, isPriority);
@@ -1282,12 +1289,12 @@ async function performMarketSync(): Promise<boolean> {
     };
   }
 
-  const chunkSize = 12; // High performance bulk sync
+  const chunkSize = 1; // Serialize for rate limit safety
   for (let i = 0; i < remainingStocks.length; i += chunkSize) {
     const chunk = remainingStocks.slice(i, i + chunkSize);
     const results = await Promise.all(chunk.map(async (item) => {
-      // Snappy pacing: ~0.1-0.8 seconds per request
-      await new Promise(r => setTimeout(r, Math.random() * 700 + 100));
+      // Significantly increase pacing: ~3-6 seconds per request
+      await new Promise(r => setTimeout(r, Math.random() * 3000 + 3000));
       const { klines } = await fetchStockKLines(item.ticker, true, item.name);
       return { item, klines };
     }));
@@ -1384,6 +1391,7 @@ async function performMarketSync(): Promise<boolean> {
        industryGroup = "傳產類";
     }
 
+    const prev = marketDataCache?.twStocks?.find(p => p.ticker === stockData.ticker);
     const analyzed = computeStockAnalysis(
       stockData.ticker,
       stockData.name,
@@ -1392,7 +1400,8 @@ async function performMarketSync(): Promise<boolean> {
       stockData.klines,
       rsRanking,
       industryGroup,
-      industryGroup 
+      industryGroup,
+      prev
     );
     
     if (analyzed) {
