@@ -50,8 +50,23 @@ const MINERVINI_QUOTES = [
   "「一般散戶買進深陷泥沼的低價垃圾股；而頂尖操盤手則在高位買進波動度緊縮、創新高的領先群。」"
 ];
 
+const TOP_INDUSTRIES = [
+  { name: "半導體", avgSepa: 0, breakoutRate: 0, leaders: [] },
+  { name: "PCB / ABF", avgSepa: 0, breakoutRate: 0, leaders: [] },
+  { name: "AI 伺服器", avgSepa: 0, breakoutRate: 0, leaders: [] },
+  { name: "電源 / 功率半導體", avgSepa: 0, breakoutRate: 0, leaders: [] },
+  { name: "散熱", avgSepa: 0, breakoutRate: 0, leaders: [] }
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
+  const [showSidebar, setShowSidebar] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("sepa_show_sidebar") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [selectedTicker, setSelectedTicker] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [selectedWatchCategory, setSelectedWatchCategory] = useState<string>("ALL");
@@ -680,13 +695,14 @@ export default function App() {
       </header>
 
       {/* Main Full-stack Workspace Layout Grid */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
         
         {/* Left Side informative panel rail */}
-        <aside className="w-full lg:w-72 bg-[#161B22]/65 border-b lg:border-b-0 lg:border-r border-[#30363D] p-4 flex flex-col gap-6 shrink-0 overflow-y-auto lg:max-h-[calc(100vh-65px)]">
-          
-          {/* Sync Progress Indicator if refreshing */}
-          {refreshing && (
+        {showSidebar && (
+          <aside className="w-full lg:w-72 bg-[#161B22]/65 border-b lg:border-b-0 lg:border-r border-[#30363D] p-4 flex flex-col gap-6 shrink-0 overflow-y-auto lg:max-h-[calc(100vh-65px)] animate-in slide-in-from-left duration-300">
+            
+            {/* Sync Progress Indicator if refreshing */}
+            {refreshing && (
             <div className="bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-lg space-y-2 animate-pulse">
               <div className="flex items-center justify-between text-[10px] text-indigo-400 font-bold">
                 <span className="flex items-center gap-1">
@@ -706,62 +722,6 @@ export default function App() {
             </div>
           )}
           
-          {/* Quick Stats Indicator Cards */}
-          <section className="space-y-3">
-            <h3 className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-              <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
-              市場大盤監控 (LIVE)
-            </h3>
-            
-            <div className="grid grid-cols-2 lg:grid-cols-1 gap-2">
-              <div className="bg-slate-950/50 p-2.5 rounded-lg border border-[#30363D] hover:border-slate-700 transition-colors">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400">台股加權指數</span>
-                  <span className={`font-mono font-bold flex items-center text-[11px] ${DataProvider.getTaiex().changePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                    {DataProvider.getTaiex().changePercent >= 0 ? "+" : ""}{DataProvider.getTaiex().changePercent.toFixed(2)}% {DataProvider.getTaiex().changePercent >= 0 ? <ArrowUpRight className="w-3 h-3 m-0.5" /> : <ArrowDownRight className="w-3 h-3 m-0.5" />}
-                  </span>
-                </div>
-                <div className="font-mono text-xs font-bold text-gray-100 mt-1">
-                  TAIEX: {DataProvider.getTaiex().price.toLocaleString("zh-TW")}
-                </div>
-              </div>
-
-              <div className="bg-slate-950/50 p-2.5 rounded-lg border border-[#30363D] hover:border-slate-700 transition-colors">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400">2330 台積電</span>
-                  <span className={`font-mono font-bold flex items-center text-[11px] ${tsmcStock ? (tsmcStock.changePercent >= 0 ? "text-emerald-400" : "text-rose-400") : "text-emerald-400"}`}>
-                    {tsmcStock ? (tsmcStock.changePercent >= 0 ? "+" : "") + tsmcStock.changePercent.toFixed(2) + "%" : "--%"} {tsmcStock && tsmcStock.changePercent >= 0 ? <ArrowUpRight className="w-3 h-3 m-0.5" /> : (tsmcStock ? <ArrowDownRight className="w-3 h-3 m-0.5" /> : null)}
-                  </span>
-                </div>
-                <div className="font-mono text-xs font-bold text-gray-100 mt-1">
-                  {tsmcStock ? (tsmcStock.lastClose > 0 ? tsmcStock.lastClose + " 元" : "讀取中...") : "無報價"}
-                </div>
-              </div>
-
-              <div className="bg-slate-950/50 p-2.5 rounded-lg border border-[#30363D] hover:border-slate-700 transition-colors">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400">美股 Nasdaq 指數</span>
-                  <span className={`font-mono font-bold flex items-center text-[11px] ${DataProvider.getNasdaq().changePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                    {DataProvider.getNasdaq().changePercent >= 0 ? "+" : ""}{DataProvider.getNasdaq().changePercent.toFixed(2)}% {DataProvider.getNasdaq().changePercent >= 0 ? <ArrowUpRight className="w-3 h-3 m-0.5" /> : <ArrowDownRight className="w-3 h-3 m-0.5" />}
-                  </span>
-                </div>
-                <div className="font-mono text-xs font-bold text-gray-100 mt-1">
-                  {DataProvider.getNasdaq().price.toLocaleString("en-US")}
-                </div>
-              </div>
-
-              <div className="bg-slate-950/50 p-2.5 rounded-lg border border-[#30363D] hover:border-slate-700 transition-colors">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400">強勢股比例</span>
-                  <span className="text-amber-400 font-mono font-bold text-[11px]">
-                    {Math.round((twStocks.filter(s => s.sepaScore.total >= 75).length / Math.max(1, twStocks.length)) * 1000) / 10}%
-                  </span>
-                </div>
-                <div className="font-mono text-[10px] text-gray-500 mt-1">台股篩選池: 上市強向股 {twStocks.length} 檔</div>
-              </div>
-            </div>
-          </section>
-
           {/* Context Dynamic Filter panel */}
           {(activeTab === "tw" || activeTab === "us") && (
             <section className="bg-black/30 p-4 rounded-xl border border-[#30363D] space-y-4">
@@ -915,9 +875,61 @@ export default function App() {
             </div>
           </section>
         </aside>
+      )}
 
         {/* Dynamic Workspace Container Section */}
-        <section className="flex-grow overflow-auto p-4 md:p-6 flex flex-col gap-6">
+        <section className={`flex-grow overflow-auto p-4 md:p-6 flex flex-col gap-6 transition-all duration-300 ${!showSidebar ? "w-full" : ""}`}>
+
+          {/* TOP DASHBOARD HEADER: Market Indices */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+            <div className="bg-[#161B22] p-3 rounded-xl border border-[#30363D] flex flex-col justify-center">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">Taiwan Index</span>
+                <span className={`font-mono font-bold flex items-center text-xs ${DataProvider.getTaiex().changePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {DataProvider.getTaiex().changePercent >= 0 ? "+" : ""}{DataProvider.getTaiex().changePercent.toFixed(2)}% {DataProvider.getTaiex().changePercent >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                </span>
+              </div>
+              <div className="font-mono text-lg font-black text-gray-100 tracking-tight">
+                {DataProvider.getTaiex().price.toLocaleString("zh-TW")}
+              </div>
+            </div>
+
+            <div className="bg-[#161B22] p-3 rounded-xl border border-[#30363D] flex flex-col justify-center">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">Nasdaq 100</span>
+                <span className={`font-mono font-bold flex items-center text-xs ${DataProvider.getNasdaq().changePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {DataProvider.getNasdaq().changePercent >= 0 ? "+" : ""}{DataProvider.getNasdaq().changePercent.toFixed(2)}% {DataProvider.getNasdaq().changePercent >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                </span>
+              </div>
+              <div className="font-mono text-lg font-black text-gray-100 tracking-tight">
+                {DataProvider.getNasdaq().price.toLocaleString("en-US")}
+              </div>
+            </div>
+
+            <div className="bg-[#161B22] p-3 rounded-xl border border-[#30363D] flex flex-col justify-center">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">TSMC (2330)</span>
+                <span className={`font-mono font-bold flex items-center text-xs ${tsmcStock ? (tsmcStock.changePercent >= 0 ? "text-emerald-400" : "text-rose-400") : "text-emerald-400"}`}>
+                  {tsmcStock ? (tsmcStock.changePercent >= 0 ? "+" : "") + tsmcStock.changePercent.toFixed(2) + "%" : "--%"}
+                </span>
+              </div>
+              <div className="font-mono text-lg font-black text-gray-100 tracking-tight">
+                {tsmcStock ? tsmcStock.lastClose + " 元" : "---"}
+              </div>
+            </div>
+
+            <div className="bg-[#161B22] p-3 rounded-xl border border-[#30363D] flex flex-col justify-center">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">Momentum Scope</span>
+                <span className="text-amber-400 font-mono font-black text-xs">
+                  {Math.round((twStocks.filter(s => s.sepaScore.total >= 75).length / Math.max(1, twStocks.length)) * 1000) / 10}%
+                </span>
+              </div>
+              <div className="text-[11px] text-gray-400 font-bold">
+                強向股: {twStocks.length} 檔
+              </div>
+            </div>
+          </div>
 
           {error && (
             <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-center gap-3 text-rose-400 text-sm animate-in fade-in slide-in-from-top-4 duration-300">
@@ -1108,14 +1120,14 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 3. 今日最強產業 Top 5 Dashboard */}
-              <div className="space-y-2 mt-4 bg-[#161B22]/40 p-4 rounded-xl border border-[#30363D]/60 shadow">
-                <div className="flex items-center justify-between">
+              {/* 今日最強產業 Top 5 Dashboard */}
+              <div className="space-y-3 mt-6 bg-[#161B22]/40 p-5 rounded-2xl border border-[#30363D]/60 shadow-sm">
+                <div className="flex items-center justify-between mb-1">
                   <h3 className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
                     <Flame className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
                     今日最強產業 Top 5 主流領頭羊 (點擊過濾 SEPA 上市名單)
                   </h3>
-                  <span className="text-[10px] text-gray-500">依 SEPA 均值、突破數、今日強度及量能強度權重計分</span>
+                  <span className="text-[10px] text-gray-500 italic">依 SEPA 均值、突破數、今日強度及量能強度權重計分</span>
                 </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -1131,9 +1143,9 @@ export default function App() {
                             marketFilter: isSelect ? "ALL" : ind.name
                           }));
                         }}
-                        className={`text-left p-3 rounded-xl border transition-all relative overflow-hidden select-none cursor-pointer flex flex-col justify-between h-[105px] ${
+                        className={`text-left p-3.5 rounded-xl border transition-all relative overflow-hidden select-none cursor-pointer flex flex-col justify-between h-[115px] ${
                           isSelect
-                            ? "bg-emerald-950/20 border-emerald-500/80 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                            ? "bg-emerald-950/20 border-emerald-500/80 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
                             : "bg-[#0d1117] hover:bg-[#161B22] border-[#30363D]/70 hover:border-slate-600"
                         }`}
                       >
@@ -1144,10 +1156,10 @@ export default function App() {
                         
                         <div>
                           <div className="font-bold text-[12px] text-white leading-tight pr-4">{ind.name}</div>
-                          <div className="text-[8.5px] text-gray-500 font-mono tracking-wider italic leading-none">{ind.label}</div>
+                          <div className="text-[8.5px] text-gray-500 font-mono tracking-wider italic leading-none mt-0.5">{ind.label}</div>
                         </div>
 
-                        <div className="mt-2 space-y-0.5 w-full">
+                        <div className="mt-auto space-y-0.5 w-full">
                           <div className="flex justify-between items-center text-[10px]">
                             <span className="text-gray-400 text-[8.5px] font-medium uppercase tracking-tight">SEPA 均分</span>
                             <span className="font-bold font-mono text-emerald-400 text-[11px]">{ind.avgSepa}</span>
@@ -1160,7 +1172,7 @@ export default function App() {
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center text-[9px] font-mono pt-1 border-t border-slate-800/40 leading-none">
+                          <div className="flex justify-between items-center text-[9px] font-mono pt-1.5 mt-1 border-t border-slate-800/60 leading-none">
                             <span className={isChangePos ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
                               {isChangePos ? "+" : ""}{ind.avgChange}%
                             </span>
@@ -1334,6 +1346,7 @@ export default function App() {
                   <span>Ranked top {filteredUsStocks.length} compliant tickers</span>
                 </div>
               </div>
+
             </div>
           )}
 
@@ -1503,8 +1516,8 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Main List Table Container */}
-              <div className="bg-[#161B22] rounded-xl border border-[#30363D] shadow-xl overflow-hidden flex flex-col min-h-[400px]">
+                  {/* Main List Table Container */}
+                  <div className="bg-[#161B22] rounded-xl border border-[#30363D] shadow-xl overflow-hidden flex flex-col min-h-[400px]">
                 <div className="p-4 border-b border-[#30363D] flex flex-wrap items-center justify-between gap-3 bg-[#010409]">
                   <div>
                     <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
@@ -2018,11 +2031,36 @@ export default function App() {
               <div className="border-b border-slate-850 pb-3">
                 <h2 className="text-xl font-extrabold text-white flex items-center gap-2">
                   <Settings className="w-5 h-5 text-indigo-400" />
-                  SEPA 系統量化權重設定
+                  系統設定與偏好
                 </h2>
                 <p className="text-xs text-gray-400">
-                  Mark Minervini 所使用的 Specific Entry Point Analysis 的基礎評分模型為 100 分。此面板允許研究員根據各市場特性自訂權重。
+                  調整交易系統權重、佈局顯示以及流動性篩選因子。
                 </p>
+              </div>
+
+              {/* Layout Adjustment */}
+              <div className="bg-[#161B22] p-5 rounded-2xl border border-[#30363D] space-y-4">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-[#30363D] pb-3">
+                  <Layers className="w-5 h-5 text-indigo-400" />
+                  介面佈局設定
+                </h3>
+                
+                <div className="flex items-center justify-between p-2">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-gray-200 uppercase tracking-tight">顯示側邊篩選面板</span>
+                    <span className="text-[10px] text-gray-500">在電腦版開啟或隱藏左側的過濾與大盤監視選單，隱藏後列表會延伸至全螢幕。</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const val = !showSidebar;
+                      setShowSidebar(val);
+                      localStorage.setItem("sepa_show_sidebar", String(val));
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${showSidebar ? "bg-emerald-600" : "bg-slate-700"}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${showSidebar ? "translate-x-6" : "translate-x-1"}`} />
+                  </button>
+                </div>
               </div>
 
               {/* Form config weights */}

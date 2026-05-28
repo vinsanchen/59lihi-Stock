@@ -140,6 +140,7 @@ let marketDataCache: {
   twStocks: any[];
   usStocks: any[];
   stockPoolCount?: number;
+  topIndustries?: any[];
 } | null = null;
 
 // Cool-down tracking to protect Yahoo Finance and Stooq API from rate blocks
@@ -1232,14 +1233,55 @@ async function performMarketSync(): Promise<boolean> {
   
   // 2. Fetch full TWSE stock list
   twseStockList = await fetchTWSEList();
-  if (!twseStockList || twseStockList.length === 0) {
-    throw new Error("市場資料同步失敗，請檢查資料來源 (無法取得上市股票清單)");
-  }
   
+  // 3. Define US stock universe for tracking
+  const usUniverse = [
+    { ticker: "NVDA", name: "Nvidia" },
+    { ticker: "TSLA", name: "Tesla" },
+    { ticker: "AAPL", name: "Apple" },
+    { ticker: "MSFT", name: "Microsoft" },
+    { ticker: "AMD", name: "AMD" },
+    { ticker: "AMZN", name: "Amazon" },
+    { ticker: "GOOGL", name: "Google" },
+    { ticker: "META", name: "Meta" },
+    { ticker: "AVGO", name: "Broadcom" },
+    { ticker: "SMCI", name: "SuperMicro" },
+    { ticker: "ARM", name: "ARM Holdings" },
+    { ticker: "MU", name: "Micron" },
+    { ticker: "ASML", name: "ASML" },
+    { ticker: "MSTR", name: "MicroStrategy" },
+    { ticker: "COIN", name: "Coinbase" },
+    { ticker: "PLTR", name: "Palantir" }
+  ];
+
   const finalTwList: any[] = [];
+  const finalUsList: any[] = [];
   const rsScoreMap: Record<string, number> = {};
   
-  // 3. Scan all 1000+ TWSE stocks
+  // 4. Scan US Stocks first (usually faster as it's a smaller universe)
+  console.log(`[Market Sync] Scanning ${usUniverse.length} US momentum stocks...`);
+  for (const item of usUniverse) {
+    const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+    // Add small delay to avoid rate limit
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    if (klines && klines.length >= 150) {
+      const last = klines[klines.length - 1].close;
+      const getReturn = (days: number) => {
+        if (klines.length <= days) return 0;
+        const prev = klines[klines.length - days].close;
+        return (last - prev) / prev;
+      };
+      // For US, we use a simple RS rank within this subset for now
+      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+      rsScoreMap[item.ticker] = rsScore;
+      
+      const analyzed = computeStockAnalysis(item.ticker, item.name, "NASDAQ", "US", klines, 85, "科技");
+      if (analyzed) finalUsList.push(analyzed);
+    }
+  }
+
+  // 5. Scan all 1000+ TWSE stocks
   console.log(`[Market Sync] Scanning ${twseStockList.length} TWSE stocks...`);
   
   // Priority handle for leaders
@@ -1394,7 +1436,7 @@ async function performMarketSync(): Promise<boolean> {
           taiex: taiexInfo || { price: 0, changePercent: 0, date: "" },
           nasdaq: nasdaqInfo || { price: 0, changePercent: 0, date: "" },
           twStocks: filteredTemp,
-          usStocks: [],
+          usStocks: finalUsList,
           stockPoolCount: twseStockList.length
         };
       }
@@ -1523,13 +1565,43 @@ async function performMarketSync(): Promise<boolean> {
   const second = parts.find(p => p.type === 'second')?.value;
   const formatTime = `${year}-${month}-${day} ${hour}:${minute}:${second} CST`;
   
+  // 6. Calculate Dynamic Industry Rankings
+  const industrySummary: Record<string, { totalSepa: number, count: number, breakoutCount: number, leaders: string[] }> = {};
+  
+  [...checkedTwList, ...finalUsList].forEach(s => {
+    const ind = s.subIndustry || s.mainIndustry || "其他";
+    if (!industrySummary[ind]) {
+      industrySummary[ind] = { totalSepa: 0, count: 0, breakoutCount: 0, leaders: [] };
+    }
+    industrySummary[ind].totalSepa += s.sepaScore.total;
+    industrySummary[ind].count += 1;
+    if (s.statusEn === "Breakout" || s.statusEn === "Near Pivot") {
+      industrySummary[ind].breakoutCount += 1;
+    }
+    if (s.sepaScore.total >= 80) {
+      industrySummary[ind].leaders.push(s.name);
+    }
+  });
+
+  const rankedIndustries = Object.entries(industrySummary)
+    .map(([name, data]) => ({
+      name,
+      avgSepa: Math.round((data.totalSepa / data.count) * 10) / 10,
+      breakoutRate: Math.round((data.breakoutCount / data.count) * 100),
+      leaders: data.leaders.slice(0, 3)
+    }))
+    .filter(ind => ind.name !== "其他" && ind.name !== "電子類" && ind.name !== "傳產類")
+    .sort((a, b) => (b.avgSepa + b.breakoutRate/2) - (a.avgSepa + a.breakoutRate/2))
+    .slice(0, 5);
+
   marketDataCache = {
     lastUpdated: formatTime,
     taiex: taiexInfo,
     nasdaq: nasdaqInfo,
     twStocks: checkedTwList,
-    usStocks: [],
-    stockPoolCount: twseStockList.length
+    usStocks: finalUsList,
+    stockPoolCount: twseStockList.length,
+    topIndustries: rankedIndustries
   };
   
   saveCacheToFile();

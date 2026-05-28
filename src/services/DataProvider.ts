@@ -23,6 +23,7 @@ export class DataProvider {
   private static weights: SepaWeights = DEFAULT_WEIGHTS;
   private static lastUpdated: string = "";
   private static poolCount: number = 0;
+  private static topIndustries: any[] = [];
   private static taiexVal = { price: 0, changePercent: 0, date: "" };
   private static nasdaqVal = { price: 0, changePercent: 0, date: "" };
 
@@ -40,6 +41,7 @@ export class DataProvider {
       if (data) {
         if (data.lastUpdated) this.lastUpdated = data.lastUpdated;
         if (data.stockPoolCount !== undefined) this.poolCount = data.stockPoolCount;
+        if (data.topIndustries) this.topIndustries = data.topIndustries;
         if (data.taiex) this.taiexVal = data.taiex;
         if (data.nasdaq) this.nasdaqVal = data.nasdaq;
         
@@ -161,5 +163,9 @@ export class DataProvider {
 
   public static getNasdaq() {
     return this.nasdaqVal;
+  }
+
+  public static getTopIndustries() {
+    return this.topIndustries;
   }
 }
