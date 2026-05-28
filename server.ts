@@ -146,6 +146,7 @@ let marketDataCache: {
 let yahooRateLimitUntil = 0;
 let stooqRateLimitUntil = 0;
 let finMindRateLimitUntil = 0;
+let globalSyncingFlag = false;
 
 // ==========================================
 // SEPA Watchlist Tracker Registry
@@ -157,6 +158,8 @@ interface WatchlistTrackerItem {
   watchlistCategoryEn?: "Core Watchlist" | "Near Pivot" | "Breakout Today" | "Extended" | "Failed Setup" | "Regular Watch";
 }
 let watchlistTrackerRegistry: Record<string, WatchlistTrackerItem> = {};
+let cachedIndexData: Record<string, { data: { price: number; changePercent: number; date: string }; timestamp: number }> = {};
+const INDEX_CACHE_TTL = 5 * 60 * 1000; // 5-minute memory cache
 
 // Initialize Watchlist Tracker
 function initializeWatchlistTracker() {
@@ -251,14 +254,13 @@ function loadCacheFromFile() {
     if (fs.existsSync(CACHE_FILE)) {
       const data = fs.readFileSync(CACHE_FILE, "utf-8");
       const parsed = JSON.parse(data);
-      if (parsed && parsed.lastUpdated && Array.isArray(parsed.twStocks) && Array.isArray(parsed.usStocks)) {
+      if (parsed && parsed.lastUpdated && Array.isArray(parsed.twStocks)) {
         const firstTW = parsed.twStocks[0];
-        if (firstTW && Array.isArray(firstTW.klines) && firstTW.klines.length < 150) {
-          console.log(`[Cache Invalidation] Disk cache has only ${firstTW.klines.length} klines. Discarding to trigger a fresh 200-day scale synchronization.`);
-          return;
+        if (firstTW && Array.isArray(firstTW.klines) && firstTW.klines.length < 100) {
+          console.warn(`[Cache Warning] Disk cache has limited history (${firstTW.klines.length} klines). Keeping it but a fresh sync is recommended.`);
         }
         marketDataCache = parsed;
-        console.log(`[Cache Loaded] Loaded stock data cache successfully from disk (${parsed.twStocks.length} TW, ${parsed.usStocks.length} US), last updated at ${parsed.lastUpdated}`);
+        console.log(`[Cache Loaded] Loaded stock data cache successfully from disk (${parsed.twStocks.length} TW stocks), last updated at ${parsed.lastUpdated}`);
       }
     }
   } catch (err: any) {
@@ -612,8 +614,8 @@ function computeStockAnalysis(
 }
 
 // Scrapes a ticker from Yahoo Finance Chart API with auto-fallback and rotation
-async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true): Promise<any> {
-  if (Date.now() < yahooRateLimitUntil) {
+async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true, isPriority = false): Promise<any> {
+  if (Date.now() < yahooRateLimitUntil && !isPriority) {
     return null;
   }
   const subdomain = useQuery2 ? "query2" : "query1";
@@ -670,27 +672,36 @@ async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true):
       reason = "rate limit";
     }
     
-    console.warn(`[Yahoo Scraper Warning] Ticker: ${ticker} failed on ${subdomain} (Reason: ${reason}).`);
+    const isIndex = ticker.startsWith("^");
+    if (!isIndex) {
+      const isRateLimited = reason === "rate limit" || reason === "API blocked";
+      // Only log if it's a priority ticker OR it's not a rate limit (meaning it's an unexpected error)
+      if (isPriority) {
+        console.warn(`[Yahoo Scraper Warning] Ticker: ${ticker} failed on ${subdomain} (Reason: ${reason}).`);
+      } else if (isRateLimited && Date.now() >= yahooRateLimitUntil) {
+        // Log once briefly if first hit
+        console.warn(`[Yahoo Rate Limit Hit] Yahoo Finance hit rate limits. Engaging cooldown.`);
+      }
+    }
     
     if (reason === "rate limit" || reason === "API blocked") {
       // Exponentially increase cooldown for global blocks
       const currentCooldown = yahooRateLimitUntil - Date.now();
-      const nextCooldown = Math.max(10 * 60 * 1000, currentCooldown * 1.5);
+      const nextCooldown = Math.min(20 * 60 * 1000, Math.max(5 * 60 * 1000, currentCooldown * 1.2)); 
       yahooRateLimitUntil = Date.now() + nextCooldown;
     }
     
     // For critical indices, prioritize retry with query1 
-    const isIndex = ticker.startsWith("^");
     if (useQuery2) {
-      await new Promise(r => setTimeout(r, isIndex ? 500 : 100));
-      return getYahooChartData(ticker, retries, false);
+      await new Promise(r => setTimeout(r, (isIndex || isPriority) ? 500 : 100));
+      return getYahooChartData(ticker, retries, false, isPriority);
     }
     
     if (retries > 0) {
-      const waitTime = (isIndex ? 1000 : 200) * (2 - retries);
+      const waitTime = (isIndex || isPriority ? 1000 : 200) * (2 - retries);
       console.log(`[Retrying] Ticker: ${ticker}, remaining retries: ${retries}, waiting ${waitTime}ms...`);
       await new Promise(r => setTimeout(r, waitTime));
-      return getYahooChartData(ticker, retries - 1, true);
+      return getYahooChartData(ticker, retries - 1, true, isPriority);
     }
     return null;
   }
@@ -737,8 +748,8 @@ function parseYahooKLines(json: any): any[] {
 }
 
 // Scrape Taiwan Stock Price using FinMind API
-async function getFinMindChartData(ticker: string): Promise<any[]> {
-  if (Date.now() < finMindRateLimitUntil) {
+async function getFinMindChartData(ticker: string, isPriority = false): Promise<any[]> {
+  if (Date.now() < finMindRateLimitUntil && !isPriority) {
     return [];
   }
   const oneYearAgo = new Date();
@@ -755,9 +766,14 @@ async function getFinMindChartData(ticker: string): Promise<any[]> {
     clearTimeout(id);
     
     if (!res.ok) {
-      if (res.status === 402 || res.status === 403 || res.status === 429) {
-        finMindRateLimitUntil = Date.now() + 30 * 60 * 1000; // 30 mins block for 403/402
+    if (res.status === 402) {
+      if (Date.now() >= finMindRateLimitUntil) {
+        console.warn(`[FinMind Quota Alert] Quota exhausted (402). Engaging 2-hour cooldown.`);
       }
+      finMindRateLimitUntil = Date.now() + 120 * 60 * 1000; // 2 hour block for quota exhausted
+    } else if (res.status === 403 || res.status === 429) {
+      finMindRateLimitUntil = Date.now() + 15 * 60 * 1000; // 15 mins block for 429/403
+    }
       throw new Error(`FinMind HTTP ${res.status}`);
     }
     
@@ -779,16 +795,19 @@ async function getFinMindChartData(ticker: string): Promise<any[]> {
     return klines;
   } catch (err: any) {
     clearTimeout(id);
-    console.error(`[FinMind Failed] Ticker: ${ticker}, error:`, err.message || err);
+    if (Date.now() >= finMindRateLimitUntil && !err.message?.includes("402")) {
+      // Only log if not already in cooldown or if it's not a known 402 (which we already log as a Warning above)
+      console.error(`[FinMind Failed] Ticker: ${ticker}, error:`, err.message || err);
+    }
     return [];
   }
 }
 
 // Scrape stock price using Stooq CSV endpoint
-async function getStooqChartData(ticker: string, isTW: boolean): Promise<any[]> {
+async function getStooqChartData(ticker: string, isTW: boolean, isPriority = false): Promise<any[]> {
   const symbol = ticker.startsWith("^") ? ticker.toLowerCase() : (isTW ? `${ticker}.tw` : `${ticker.toLowerCase()}.us`);
   
-  if (Date.now() < stooqRateLimitUntil) {
+  if (Date.now() < stooqRateLimitUntil && !isPriority) {
     return []; // Bypass immediately while rate limit cooldown is engaged
   }
 
@@ -922,7 +941,7 @@ async function fetchIndexDataBulk(): Promise<{
       try {
         const url = `https://${sub}.finance.yahoo.com/v7/finance/quote?symbols=^TWII,^IXIC`;
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 4000);
+        const id = setTimeout(() => controller.abort(), 2000);
         const res = await fetch(url, {
           signal: controller.signal,
           headers: {
@@ -932,7 +951,7 @@ async function fetchIndexDataBulk(): Promise<{
         clearTimeout(id);
         
         if (res.status === 429 || res.status === 403) {
-           yahooRateLimitUntil = Date.now() + 5 * 60 * 1000;
+           yahooRateLimitUntil = Date.now() + 2 * 60 * 1000; // 2 min quick cooldown
            throw new Error(`Yahoo HTTP ${res.status}`);
         }
 
@@ -986,18 +1005,34 @@ async function fetchIndexDataBulk(): Promise<{
   return { taiex: taiexSingle, nasdaq: nasdaqSingle };
 }
 
-// High stability index getter combining Yahoo, FinMind & Stooq
+// High stability index getter combining Yahoo, FinMind & Stooq with 5-min caching
 async function fetchIndexData(indexSymbol: string): Promise<{ price: number; changePercent: number; date: string }> {
+  // Check index cache first
+  const now = Date.now();
+  if (cachedIndexData[indexSymbol] && (now - cachedIndexData[indexSymbol].timestamp < INDEX_CACHE_TTL)) {
+    return cachedIndexData[indexSymbol].data;
+  }
+
   const currentDateStr = new Date().toISOString().split("T")[0];
   const defaultIndices: { [key: string]: { price: number; changePercent: number; date: string } } = {
     "^TWII": { price: 21480.35, changePercent: 1.24, date: currentDateStr },
     "^IXIC": { price: 16920.58, changePercent: 0.85, date: currentDateStr }
   };
   
-  // 1. Try Yahoo Finance first
-  if (Date.now() >= yahooRateLimitUntil) {
+  // 1. For TAIEX, prioritize FinMind if Yahoo is rate limited
+  if (indexSymbol === "^TWII") {
+    if (Date.now() < yahooRateLimitUntil) {
+      console.log(`[Index Pre-emptive Fallback] Yahoo rate limited. Using FinMind for TAIEX...`);
+      const finmindIndex = await fetchTaiexFromFinMind();
+      if (finmindIndex) return finmindIndex;
+    }
+  }
+
+  // 2. Try Yahoo Finance
+  const isPriority = true; // Index symbols are always priority
+  if (Date.now() >= yahooRateLimitUntil || isPriority) {
     try {
-      const raw = await getYahooChartData(indexSymbol);
+      const raw = await getYahooChartData(indexSymbol, 2, true, isPriority);
       if (raw) {
         const res0 = raw?.chart?.result?.[0];
         if (res0) {
@@ -1008,21 +1043,28 @@ async function fetchIndexData(indexSymbol: string): Promise<{ price: number; cha
             const prevC = meta.previousClose || meta.chartPreviousClose || (pk.length > 1 ? pk[pk.length - 2].close : lPrice);
             const lChange = prevC ? ((lPrice - prevC) / prevC) * 100 : 0;
             const lDate = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString().split("T")[0] : currentDateStr;
-            console.log(`[Index Success] Yahoo loaded ${indexSymbol}: ${lPrice} (${lChange}%)`);
-            return { price: Math.round(lPrice * 100) / 100, changePercent: Math.round(lChange * 100) / 100, date: lDate };
+            const data = { price: Math.round(lPrice * 100) / 100, changePercent: Math.round(lChange * 100) / 100, date: lDate };
+            
+            // Success - store in cache
+            cachedIndexData[indexSymbol] = { data, timestamp: Date.now() };
+            console.log(`[Index Success] Yahoo loaded ${indexSymbol}: ${data.price} (${data.changePercent}%)`);
+            return data;
           }
         }
       }
     } catch (err: any) {
-      console.warn(`[Index Warning] Yahoo rates limited or blocked for index ${indexSymbol}. Transitioning to secondary providers...`);
+      // Only log if not already rate-limited to reduce noise
+      if (Date.now() >= yahooRateLimitUntil) {
+        console.warn(`[Index Warning] Yahoo rates limited or blocked for index ${indexSymbol}. Transitioning to secondary providers...`);
+      }
     }
   }
 
-  // 2. Try FinMind for TAIEX fallback
+  // 3. Fallback to FinMind for TAIEX
   if (indexSymbol === "^TWII") {
     const finmindIndex = await fetchTaiexFromFinMind();
     if (finmindIndex) {
-      console.log(`[Index Success] FinMind loaded TAIEX: ${finmindIndex.price} (${finmindIndex.changePercent}%)`);
+      cachedIndexData[indexSymbol] = { data: finmindIndex, timestamp: Date.now() };
       return finmindIndex;
     }
   }
@@ -1040,19 +1082,21 @@ async function fetchIndexData(indexSymbol: string): Promise<{ price: number; cha
     stooqSym = "^comp"; // Stooq Nasdaq Composite symbol
   }
   
-  if (stooqSym && Date.now() >= stooqRateLimitUntil) {
+  if (stooqSym && (Date.now() >= stooqRateLimitUntil || isPriority)) {
     try {
-      const klines = await getStooqChartData(stooqSym, false);
+      const klines = await getStooqChartData(stooqSym, false, isPriority);
       if (klines && klines.length >= 2) {
         const last = klines[klines.length - 1];
         const prev = klines[klines.length - 2];
         const changePercent = ((last.close - prev.close) / prev.close) * 100;
-        console.log(`[Index Success] Stooq loaded ${indexSymbol} (${stooqSym}): ${last.close} (${changePercent}%)`);
-        return {
+        const res = {
           price: last.close,
           changePercent: Math.round(changePercent * 100) / 100,
           date: last.date
         };
+        cachedIndexData[indexSymbol] = { data: res, timestamp: Date.now() };
+        console.log(`[Index Success] Stooq loaded ${indexSymbol} (${stooqSym}): ${res.price} (${res.changePercent}%)`);
+        return res;
       }
     } catch (err: any) {
       console.warn(`[Index Warning] Stooq failed for index ${indexSymbol} (${stooqSym}):`, err.message || err);
@@ -1065,39 +1109,50 @@ async function fetchIndexData(indexSymbol: string): Promise<{ price: number; cha
 
 // Unified multi-provider KLine fetcher - prioritizes FinMind for Taiwan
 async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Promise<{ klines: any[]; isMock: boolean }> {
+  const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669", "2337", "2344", "2356", "2376", "2301", "2313", "2368", "3034", "3037"];
+  const isPriority = priorityTickers.includes(ticker);
+
   // Option A: FinMind (Prioritized for Taiwan stocks)
-  if (isTW) {
+  // If quota exhausted (402), strictly honor it even for priority
+  const finMindBlocked = Date.now() < finMindRateLimitUntil;
+  if (isTW && !finMindBlocked) {
     try {
-      const klines = await getFinMindChartData(ticker);
+      const klines = await getFinMindChartData(ticker, isPriority);
       if (klines && klines.length >= 50) {
         return { klines, isMock: false };
       }
     } catch (err: any) {
-      console.warn(`[TW-FETCH] FinMind failover for ${ticker}`);
+      // Small failover window
     }
   }
 
   // Option B. Yahoo Finance Charts
-  try {
-    const raw = await getYahooChartData(isTW ? `${ticker}.TW` : ticker);
-    if (raw) {
-      const klines = parseYahooKLines(raw);
+  const yahooBlocked = Date.now() < yahooRateLimitUntil;
+  if (!yahooBlocked || isPriority) {
+    try {
+      const raw = await getYahooChartData(isTW ? `${ticker}.TW` : ticker, isPriority ? 2 : 0, true, isPriority);
+      if (raw) {
+        const klines = parseYahooKLines(raw);
+        if (klines && klines.length >= 50) {
+          return { klines, isMock: false };
+        }
+      }
+    } catch (err: any) {
+      // Suppress logs if we are already rate limited or the error is common
+    }
+  }
+  
+  // Option C. Stooq CSV (Last resort)
+  const stooqBlocked = Date.now() < stooqRateLimitUntil;
+  if (!stooqBlocked || isPriority) {
+    try {
+      const klines = await getStooqChartData(ticker, isTW, isPriority);
       if (klines && klines.length >= 50) {
         return { klines, isMock: false };
       }
+    } catch (err: any) {
+      // Suppress
     }
-  } catch (err: any) {
-    console.warn(`[Scraping Warning] Yahoo Finance chart failover for ${ticker}`);
-  }
-  
-  // Option C. Stooq CSV
-  try {
-    const klines = await getStooqChartData(ticker, isTW);
-    if (klines && klines.length >= 50) {
-      return { klines, isMock: false };
-    }
-  } catch (err: any) {
-    console.warn(`[Scraping Warning] Stooq CSV failover abortive on ${ticker}.`);
   }
   
   // No mock data allowed - return empty if all sources fail
@@ -1106,15 +1161,28 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
 
 // Perform market sync across all TWSE listed stocks
 async function performMarketSync(): Promise<boolean> {
-  console.log("[Market Sync Started] Bootstrapping real-time market scanner for TWSE...");
+  if (globalSyncingFlag) return false;
+  globalSyncingFlag = true;
+  
+  try {
+    console.log("[Market Sync Started] Bootstrapping real-time market scanner for TWSE...");
   
   // 1. Scrape Index Data in bulk
   let indexData = await fetchIndexDataBulk();
   
   // High reliability cross-check for TAIEX
   if (!indexData.taiex || indexData.taiex.price < 1000) {
+     console.log("[Index Fallback] TAIEX data missing or invalid, attempting FinMind specific fetch...");
      const finInfo = await fetchTaiexFromFinMind();
-     if (finInfo) indexData.taiex = finInfo;
+     if (finInfo) {
+       indexData.taiex = finInfo;
+       console.log(`[Index Fallback Success] FinMind recovered TAIEX: ${finInfo.price}`);
+     }
+  }
+  
+  if (!indexData.taiex) {
+    console.error("[Index Critical Failure] Could not fetch TAIEX from any source. Using last cached value if available.");
+    if (marketDataCache?.taiex) indexData.taiex = marketDataCache.taiex;
   }
   
   const taiexInfo = indexData.taiex;
@@ -1132,29 +1200,70 @@ async function performMarketSync(): Promise<boolean> {
   // 3. Scan all 1000+ TWSE stocks
   console.log(`[Market Sync] Scanning ${twseStockList.length} TWSE stocks...`);
   
-  // Priority handle for 2330 and common leaders
-  const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669"];
+  // Priority handle for leaders
+  const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669", "2337", "2344", "2356", "2376", "2301", "2313", "2368", "3034", "3037"];
   
-  const chunkSize = 8;
-  for (let i = 0; i < twseStockList.length; i += chunkSize) {
-    const chunk = twseStockList.slice(i, i + chunkSize);
+  // Fetch priority tickers first for high reliability - concurrent
+  console.log(`[Market Sync] Priority fetch phase starting for ${priorityTickers.length} leaders...`);
+  const priorityStocks = twseStockList.filter(s => priorityTickers.includes(s.ticker));
+  const remainingStocks = twseStockList.filter(s => !priorityTickers.includes(s.ticker));
+
+  const priorityResults = await Promise.all(priorityStocks.map(async (item) => {
+    // Staggered starts for priority
+    await new Promise(r => setTimeout(r, Math.random() * 400));
+    const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+    return { item, klines };
+  }));
+
+  for (const { item, klines } of priorityResults) {
+    if (klines && klines.length >= 150) {
+      const last = klines[klines.length - 1].close;
+      const getReturn = (days: number) => {
+        if (klines.length <= days) return 0;
+        const prev = klines[klines.length - days].close;
+        return (last - prev) / prev;
+      };
+      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+      rsScoreMap[item.ticker] = rsScore;
+      finalTwList.push({ ...item, klines });
+    } else {
+      console.warn(`[Market Sync Priority Warning] Ticker ${item.ticker} (${item.name}) failed fetch in priority phase.`);
+    }
+  }
+
+  // Update cache immediately after priority phase so user sees results right away
+  if (finalTwList.length > 0) {
+    console.log(`[Market Sync] Priority phase complete (${finalTwList.length} stocks). Updating intermediate cache.`);
+    const tempResults = finalTwList.map(s => computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 90, s.industry));
+    marketDataCache = {
+      ...marketDataCache,
+      lastUpdated: `優先股同步完成 (掃描中...)`,
+      taiex: taiexInfo || marketDataCache?.taiex || { price: 0, changePercent: 0, date: "" },
+      nasdaq: nasdaqInfo || marketDataCache?.nasdaq || { price: 0, changePercent: 0, date: "" },
+      twStocks: tempResults.filter(Boolean),
+      usStocks: [],
+      stockPoolCount: twseStockList.length
+    };
+  }
+
+  const chunkSize = 6; // Balance between speed and stability 
+  for (let i = 0; i < remainingStocks.length; i += chunkSize) {
+    const chunk = remainingStocks.slice(i, i + chunkSize);
     const results = await Promise.all(chunk.map(async (item) => {
-      // Gentle pacing - increased delay slightly to avoid rate limit
-      await new Promise(r => setTimeout(r, Math.random() * 300 + 100));
+      // Faster pacing: ~0.5-1.5 seconds per request
+      await new Promise(r => setTimeout(r, Math.random() * 1000 + 100));
       const { klines } = await fetchStockKLines(item.ticker, true, item.name);
       return { item, klines };
     }));
 
+    let chunkFailures = 0;
     for (const { item, klines } of results) {
       if (!klines || klines.length < 150) {
-        if (priorityTickers.includes(item.ticker)) {
-           console.warn(`[Market Sync Priority Warning] Ticker ${item.ticker} (${item.name}) failed fetch or has insufficient data (${klines?.length || 0} bars).`);
-        }
+        chunkFailures++;
         continue;
       }
       
       const last = klines[klines.length - 1].close;
-      // RS Score calculation (Weighted Return over multiple periods)
       const getReturn = (days: number) => {
         if (klines.length <= days) return 0;
         const prev = klines[klines.length - days].close;
@@ -1163,16 +1272,48 @@ async function performMarketSync(): Promise<boolean> {
       
       const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
       rsScoreMap[item.ticker] = rsScore;
-      
       finalTwList.push({ ...item, klines });
     }
     
-    if (i % 25 === 0 && i > 0) {
+    // If whole chunk failed, we might be blocked globally. Pause.
+    if (chunkFailures === chunk.length) {
+      const blockedUntil = Math.max(yahooRateLimitUntil, finMindRateLimitUntil, stooqRateLimitUntil);
+      if (blockedUntil > Date.now()) {
+        const waitMins = Math.ceil((blockedUntil - Date.now()) / 60000);
+        console.warn(`[Market Sync Blocked] All stems in chunk failed. API blocks active. Pausing for ${waitMins} min(s)...`);
+        await new Promise(r => setTimeout(r, Math.min(blockedUntil - Date.now(), 60000))); // Max 1 min pause per loop to re-check
+      }
+    }
+    
+    // Partial status logging and periodic safety update
+    if (i % 10 === 0 && i > 0) {
       console.log(`[Market Sync Progress] ${i}/${twseStockList.length} stocks processed. Valid: ${finalTwList.length}`);
+      
+      // If we have some data, update a "temp" cache so users see progress
+      if (finalTwList.length > 5) {
+        const tempResults = finalTwList.map(s => computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 50, s.industry));
+        const filteredTemp = tempResults.filter(Boolean);
+        marketDataCache = {
+          ...marketDataCache,
+          lastUpdated: `同步中 (${i}/${twseStockList.length})`,
+          taiex: taiexInfo || { price: 0, changePercent: 0, date: "" },
+          nasdaq: nasdaqInfo || { price: 0, changePercent: 0, date: "" },
+          twStocks: filteredTemp,
+          usStocks: [],
+          stockPoolCount: twseStockList.length
+        };
+      }
     }
   }
 
   // 4. Calculate RS Ranking (Percentile 1-99)
+  // CRITICAL SAFETY CHECK: If we failed to get a reasonable amount of data, DON'T UPDATE CACHE.
+  const minimumRequired = twseStockList.length > 0 ? Math.min(10, twseStockList.length) : 5;
+  if (finalTwList.length < minimumRequired) {
+    console.error(`[Market Sync Aborted] Only ${finalTwList.length} stocks fetched. This indicates a mass API failure. Aborting to protect existing cache.`);
+    return false;
+  }
+
   console.log(`[Market Sync] Calculating RS Ranking for ${finalTwList.length} active stocks...`);
   // Add indices to calculate relative strength against market
   const sortedByRS = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
@@ -1296,7 +1437,13 @@ async function performMarketSync(): Promise<boolean> {
   
   saveCacheToFile();
   console.log(`[Market Sync Completed] Cleaned ${checkedTwList.length} active stocks. Last updated: ${formatTime}`);
+  globalSyncingFlag = false;
   return true;
+} catch (err) {
+  console.error("[Market Sync Fatal Error]", err);
+  globalSyncingFlag = false;
+  return false;
+}
 }
 
 // REST route to deliver real market data
@@ -1304,26 +1451,56 @@ app.get("/api/market-data", async (req, res) => {
   const force = req.query.force === "true";
   
   try {
-    if (!marketDataCache && !force) {
+    if (!marketDataCache) {
       loadCacheFromFile();
     }
     
-    if (force) {
-      console.log("[Force Rescan Requested] Resetting Yahoo & Stooq rate-limiting sentinels and beginning real-time synchronize...");
-      yahooRateLimitUntil = 0; 
-      stooqRateLimitUntil = 0; // Clear both rate-limit cooldowns on explicit forced requests
+    // If we have a cache and not a force request, return immediately
+    if (marketDataCache && !force) {
+      return res.json({ ...marketDataCache, isBackgroundSyncing: false });
     }
     
-    if (!marketDataCache || force) {
-      await performMarketSync();
+    // If force or no cache, we start a sync
+    console.log(`[Market API] ${force ? "Force rescan" : "No cache"} triggered. Checking status...`);
+    
+    // Status check: if already syncing, don't double trigger
+    const isSyncing = globalSyncingFlag; 
+    
+    if (force) {
+      console.log("[Market API] Forced reset of rate-limit sentinels...");
+      yahooRateLimitUntil = 0;
+      stooqRateLimitUntil = 0;
+      finMindRateLimitUntil = 0;
     }
-    res.json({
-      ...marketDataCache,
-      debugNewCode: true
-    });
+    
+    // Start full sync in background if needed
+    if (!isSyncing && (!marketDataCache || force)) {
+      performMarketSync().catch(err => {
+        console.error("[Background Sync Error]", err);
+        globalSyncingFlag = false;
+      });
+    }
+    
+    // Return what we have
+    if (marketDataCache) {
+      return res.json({ 
+        ...marketDataCache, 
+        isBackgroundSyncing: globalSyncingFlag || isSyncing,
+        message: globalSyncingFlag ? `掃描進度: ${marketDataCache.lastUpdated}` : undefined
+      });
+    } else {
+      // Return a structured pending response so the UI knows we're working
+      return res.json({ 
+        lastUpdated: "正在初始化數據...", 
+        twStocks: [], 
+        taiex: { price: 0, changePercent: 0, date: "" },
+        isBackgroundSyncing: true,
+        message: "系統偵測到目前尚無存檔，正在從交易所緊急獲取權值股數據，請稍後 1~2 分鐘並重新整理。" 
+      });
+    }
   } catch (error: any) {
     console.error("[Market Data Sync Error] /api/market-data failed:", error.message || error);
-    res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
+    res.status(500).json({ error: "市場資料解析失敗", details: error.message || error });
   }
 });
 

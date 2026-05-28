@@ -26,7 +26,7 @@ export class DataProvider {
   private static taiexVal = { price: 0, changePercent: 0, date: "" };
   private static nasdaqVal = { price: 0, changePercent: 0, date: "" };
 
-  public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<boolean> {
+  public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<{ success: boolean; isSyncing: boolean; message?: string }> {
     if (customWeights) {
       this.weights = customWeights;
     }
@@ -42,18 +42,29 @@ export class DataProvider {
         if (data.stockPoolCount !== undefined) this.poolCount = data.stockPoolCount;
         if (data.taiex) this.taiexVal = data.taiex;
         if (data.nasdaq) this.nasdaqVal = data.nasdaq;
-        if (data.twStocks) this.twStocks = data.twStocks;
-        if (data.usStocks) this.usStocks = data.usStocks;
+        
+        // Always update twStocks if data is present, don't wait for sync completion
+        if (data.twStocks && data.twStocks.length > 0) {
+          this.twStocks = data.twStocks;
+        } else if (!data.isBackgroundSyncing) {
+          this.twStocks = data.twStocks || [];
+        }
+
+        if (data.usStocks && data.usStocks.length > 0) {
+          this.usStocks = data.usStocks;
+        } else if (!data.isBackgroundSyncing) {
+          this.usStocks = data.usStocks || [];
+        }
 
         this.twStocks = this.twStocks.map(s => this.recalculateScore(s));
         this.usStocks = this.usStocks.map(s => this.recalculateScore(s));
-        return true;
+        return { success: true, isSyncing: !!data.isBackgroundSyncing, message: data.message };
       }
     } catch (err) {
       console.error("[DataProvider] API retrieval failed:", err);
       throw err;
     }
-    return false;
+    return { success: false, isSyncing: false };
   }
 
   // Live recalculator of SEPA Scores based on settings weights

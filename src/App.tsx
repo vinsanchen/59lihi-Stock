@@ -95,6 +95,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Filter systems
   const [twFilters, setTwFilters] = useState<FilterSettings>({
@@ -125,15 +126,20 @@ export default function App() {
   // Initialize stocks lists using live API
   useEffect(() => {
     let active = true;
-    const loadData = async () => {
+    let pollInterval: any = null;
+
+    const loadData = async (isForced = false) => {
       try {
-        await DataProvider.loadFromAPI(false, weights);
+        const result = await DataProvider.loadFromAPI(isForced, weights);
         if (active) {
           const tw = DataProvider.getTwStocks(weights);
           setTwStocks(tw);
           setUsStocks(DataProvider.getUsStocks(weights));
           setLastUpdated(DataProvider.getLastUpdated());
           setPoolCount(DataProvider.getStockPoolCount());
+          setSyncMessage(result.message || null);
+          setRefreshing(result.isSyncing);
+
           if (tw.length > 0 && !selectedTicker) {
             setSelectedTicker(tw[0].ticker);
           }
@@ -142,12 +148,17 @@ export default function App() {
       } catch (err: any) {
         if (active) {
           setError(err.message || "市場資料同步失敗，請檢查資料來源。");
+          setRefreshing(false);
         }
       }
     };
+
     loadData();
+    pollInterval = setInterval(() => loadData(false), 5000);
+
     return () => {
       active = false;
+      if (pollInterval) clearInterval(pollInterval);
     };
   }, [weights]);
 
@@ -162,23 +173,22 @@ export default function App() {
   const handleRefresh = async () => {
     setRefreshing(true);
     setError(null);
+    setSyncMessage("要求已送出，正在排隊執行掃描...");
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
-      const success = await DataProvider.loadFromAPI(true, weights);
-      if (success) {
+      const result = await DataProvider.loadFromAPI(true, weights);
+      if (result.success) {
+        setSyncMessage(result.message || "正在掃描市場...");
+        setRefreshing(result.isSyncing);
         const tw = DataProvider.getTwStocks(weights);
         setTwStocks(tw);
         setUsStocks(DataProvider.getUsStocks(weights));
         setLastUpdated(DataProvider.getLastUpdated());
         setPoolCount(DataProvider.getStockPoolCount());
-        if (tw.length > 0 && !selectedTicker) {
-          setSelectedTicker(tw[0].ticker);
-        }
       }
     } catch (e: any) {
       console.error("[Frontend] Force rescan failed:", e);
       setError(e.message || "市場資料同步失敗，請檢查資料來源。");
-    } finally {
       setRefreshing(false);
     }
   };
@@ -585,8 +595,11 @@ export default function App() {
         {/* Sync panel actions */}
         <div className="flex items-center gap-4">
           <div className="hidden sm:block text-right">
-            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block">最後掃描更新</span>
-            <span className="text-xs font-mono text-[#8B949E] font-medium block">{lastUpdated}</span>
+            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
+            <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
+            {refreshing && syncMessage && (
+              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
+            )}
           </div>
 
           <button
@@ -605,6 +618,27 @@ export default function App() {
         
         {/* Left Side informative panel rail */}
         <aside className="w-full lg:w-72 bg-[#161B22]/65 border-b lg:border-b-0 lg:border-r border-[#30363D] p-4 flex flex-col gap-6 shrink-0 overflow-y-auto lg:max-h-[calc(100vh-65px)]">
+          
+          {/* Sync Progress Indicator if refreshing */}
+          {refreshing && (
+            <div className="bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-lg space-y-2 animate-pulse">
+              <div className="flex items-center justify-between text-[10px] text-indigo-400 font-bold">
+                <span className="flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> 背景同步中
+                </span>
+                <span>掃描中...</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-500 animate-[sync-progress_10s_ease-in-out_infinite]" style={{ width: '40%' }}></div>
+              </div>
+              <p className="text-[10px] text-gray-400 font-medium leading-tight">
+                {syncMessage || "正在背景分批獲取最新數據... 獲取完成後將自動刷新。"}
+              </p>
+              <p className="text-[9px] text-gray-500 italic">
+                由於交易所流量限制，完整更新約需 5~10 分鐘。
+              </p>
+            </div>
+          )}
           
           {/* Quick Stats Indicator Cards */}
           <section className="space-y-3">
