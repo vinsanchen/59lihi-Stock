@@ -47,8 +47,10 @@ export class DataProvider {
         if (data.twStocks && data.twStocks.length > 0) {
           if (data.isBackgroundSyncing) {
             // Merge into existing pool during partial syncs to avoid UI jumping/flickering
-            const exitMap = new Map(this.twStocks.map(s => [s.ticker, s]));
-            data.twStocks.forEach((s: StockAnalysis) => exitMap.set(s.ticker, s));
+            // Use normalized Ticker as key to ensure no duplicates during sync
+            const exitMap = new Map();
+            this.twStocks.forEach(s => exitMap.set(s.ticker.split('.')[0].toUpperCase(), s));
+            data.twStocks.forEach((s: StockAnalysis) => exitMap.set(s.ticker.split('.')[0].toUpperCase(), s));
             this.twStocks = Array.from(exitMap.values());
           } else {
             this.twStocks = data.twStocks;

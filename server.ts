@@ -599,8 +599,13 @@ function computeStockAnalysis(
 
   const total = Math.max(10, Math.min(100, trendPoints + rsPoints + vcpPoints + volPoints + valPoints + bonus - penalty));
   
+  // SEPA Hard Caps: Non-compliant or Overextended stocks should NOT have high scores
+  let finalTotal = total;
+  if (statusEn === "Overextended") finalTotal = Math.min(65, total);
+  if (statusEn === "Non-compliant") finalTotal = Math.min(35, total);
+  
   const sepaScore = {
-    total,
+    total: finalTotal,
     trendTemplate: trendPoints,
     rsStrength: rsPoints,
     vcpPattern: vcpPoints,

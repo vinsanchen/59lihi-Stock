@@ -227,7 +227,10 @@ export default function App() {
     const providerMatch = DataProvider.getStockByTicker(selectedTicker);
     if (providerMatch) return providerMatch;
 
-    // Last resort fallback (return previous if possible, but state is reactive so just return first if REALLY not found)
+    // Last resort fallback: If we HAVE a selected ticker, don't jump to index 0. 
+    // Jumping causes UX frustration during background syncs.
+    if (selectedTicker) return localMatch || providerMatch || twStocks[0] || usStocks[0];
+    
     return twStocks[0] || usStocks[0];
   }, [selectedTicker, twStocks, usStocks]);
 
