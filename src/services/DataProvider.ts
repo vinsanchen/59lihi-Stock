@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { StockAnalysis, SepaWeights } from "../types";
+import { StockAnalysis, SepaWeights, KLine } from "../types";
 
 export const DEFAULT_WEIGHTS: SepaWeights = {
   trendTemplate: 40,
@@ -97,6 +97,17 @@ export class DataProvider {
     };
 
     return stock;
+  }
+
+  public static async fetchKlines(ticker: string): Promise<KLine[]> {
+    try {
+      const res = await fetch(`/api/stock-klines/${ticker}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch (err) {
+      console.error("[DataProvider] Failed to fetch klines:", err);
+      return [];
+    }
   }
 
   public static getTwStocks(weights?: SepaWeights): StockAnalysis[] {

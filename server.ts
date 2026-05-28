@@ -334,7 +334,8 @@ function computeStockAnalysis(
   rawKlines: any[],
   rsRanking: number,
   mainIndustry?: string,
-  subIndustry?: string
+  subIndustry?: string,
+  previousAnalysis?: any
 ): any {
   if (!rawKlines || rawKlines.length < 160) {
     return null;
@@ -464,32 +465,56 @@ function computeStockAnalysis(
   
   let pattern = "無明顯型態";
   let vcpPhaseDesc = "";
-  let pivotPrice = high52Week;
   
+  // Pivot locking management
+  let pivotPrice = high52Week;
+  let pivotCreationDate = new Date().toISOString().split('T')[0];
+  let pivotStatus: 'Active' | 'Fixed' | 'Breakout' = 'Active';
+  let originalPivot = 0;
+  let isNewBase = false;
+
+  let calculatedPivot = high52Week;
   if (profile === "vcp-tight") {
     pattern = "VCP 3T 核心收斂";
     vcpPhaseDesc = "3 段收縮，振幅顯著壓縮，成交量進入乾枯期 (Vol Dry-up)。";
-    pivotPrice = Math.round(high52Week * 0.99 * 100) / 100;
+    calculatedPivot = Math.round(high52Week * 0.99 * 100) / 100;
   } else if (profile === "forming-vcp") {
     pattern = "VCP 二段成形中";
     vcpPhaseDesc = "正進行第 2 段震盪收縮，結構尚未完全收緊，右側量能仍待沉澱。";
-    pivotPrice = Math.round(high52Week * 0.97 * 100) / 100;
+    calculatedPivot = Math.round(high52Week * 0.97 * 100) / 100;
   } else if (profile === "breakout") {
     pattern = "VCP 爆量突破";
     vcpPhaseDesc = "收斂完成，伴隨大於平均量能強勢突破 Pivot 壓力區。";
-    pivotPrice = Math.round(high52Week * 0.95 * 100) / 100;
+    calculatedPivot = Math.round(high52Week * 0.95 * 100) / 100;
   } else if (profile === "flat-base") {
     pattern = "高檔箱型收斂";
     vcpPhaseDesc = "箱型基底 (Flat Base)，價格於狹幅區間平緩整理，成交量溫和萎縮。";
-    pivotPrice = Math.round(high52Week * 1.01 * 100) / 100;
+    calculatedPivot = Math.round(high52Week * 1.01 * 100) / 100;
   } else if (profile === "overextended") {
     pattern = "高檔延伸超買";
     vcpPhaseDesc = "無收斂型態。50 日均線乖離高，呈陡峭噴出走勢，累計量能極大。";
-    pivotPrice = Math.round(high52Week * 1.02 * 100) / 100;
+    calculatedPivot = Math.round(high52Week * 1.02 * 100) / 100;
   } else if (profile === "downtrend") {
     pattern = "頭部成形空頭排列";
     vcpPhaseDesc = "均線群下行，收盤價持續低於 200MA，無多頭收斂特徵。";
-    pivotPrice = Math.round(lastClose * 1.15 * 100) / 100;
+    calculatedPivot = Math.round(lastClose * 1.15 * 100) / 100;
+  }
+
+  // Pivot locking logic
+  const breakdown = ma200 !== null && lastClose < ma200;
+  const patternFailed = profile === 'downtrend' || profile === 'overextended';
+  
+  if (previousAnalysis && previousAnalysis.buyPoint && !breakdown && !patternFailed && previousAnalysis.status !== '不符合') {
+      pivotPrice = previousAnalysis.buyPoint;
+      originalPivot = previousAnalysis.originalPivot || previousAnalysis.buyPoint;
+      pivotCreationDate = previousAnalysis.pivotCreationDate || pivotCreationDate;
+      pivotStatus = previousAnalysis.status === '已突破' ? 'Breakout' : 'Fixed';
+      isNewBase = false;
+  } else {
+      pivotPrice = calculatedPivot;
+      originalPivot = calculatedPivot;
+      pivotStatus = 'Active';
+      isNewBase = true;
   }
   
   let stopLoss = 0;
@@ -600,7 +625,11 @@ function computeStockAnalysis(
     sepaScore,
     pattern,
     vcpPhaseDesc,
-    buyPoint,
+    buyPoint: pivotPrice,
+    originalPivot,
+    pivotCreationDate,
+    pivotStatus,
+    isNewBase,
     stopLoss,
     targetPrice1,
     targetPrice2,
@@ -609,6 +638,10 @@ function computeStockAnalysis(
     status,
     statusEn,
     suggestion,
+    lastMA50: ma50,
+    lastMA150: ma150,
+    lastMA200: ma200,
+    klineCount: finalKlines.length,
     klines: finalKlines
   };
 }
@@ -768,11 +801,11 @@ async function getFinMindChartData(ticker: string, isPriority = false): Promise<
     if (!res.ok) {
     if (res.status === 402) {
       if (Date.now() >= finMindRateLimitUntil) {
-        console.warn(`[FinMind Quota Alert] Quota exhausted (402). Engaging 2-hour cooldown.`);
+        console.warn(`[FinMind Quota Alert] Quota exhausted (402). Engaging 1-hour cooldown.`);
       }
-      finMindRateLimitUntil = Date.now() + 120 * 60 * 1000; // 2 hour block for quota exhausted
+      finMindRateLimitUntil = Date.now() + 60 * 60 * 1000; // 1 hour block for quota exhausted
     } else if (res.status === 403 || res.status === 429) {
-      finMindRateLimitUntil = Date.now() + 15 * 60 * 1000; // 15 mins block for 429/403
+      finMindRateLimitUntil = Date.now() + 10 * 60 * 1000; // 10 mins block for 429/403
     }
       throw new Error(`FinMind HTTP ${res.status}`);
     }
@@ -1234,7 +1267,10 @@ async function performMarketSync(): Promise<boolean> {
   // Update cache immediately after priority phase so user sees results right away
   if (finalTwList.length > 0) {
     console.log(`[Market Sync] Priority phase complete (${finalTwList.length} stocks). Updating intermediate cache.`);
-    const tempResults = finalTwList.map(s => computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 90, s.industry));
+    const tempResults = finalTwList.map(s => {
+      const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
+      return computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 90, s.industry, undefined, prev);
+    });
     marketDataCache = {
       ...marketDataCache,
       lastUpdated: `優先股同步完成 (掃描中...)`,
@@ -1246,12 +1282,12 @@ async function performMarketSync(): Promise<boolean> {
     };
   }
 
-  const chunkSize = 6; // Balance between speed and stability 
+  const chunkSize = 12; // High performance bulk sync
   for (let i = 0; i < remainingStocks.length; i += chunkSize) {
     const chunk = remainingStocks.slice(i, i + chunkSize);
     const results = await Promise.all(chunk.map(async (item) => {
-      // Faster pacing: ~0.5-1.5 seconds per request
-      await new Promise(r => setTimeout(r, Math.random() * 1000 + 100));
+      // Snappy pacing: ~0.1-0.8 seconds per request
+      await new Promise(r => setTimeout(r, Math.random() * 700 + 100));
       const { klines } = await fetchStockKLines(item.ticker, true, item.name);
       return { item, klines };
     }));
@@ -1275,13 +1311,12 @@ async function performMarketSync(): Promise<boolean> {
       finalTwList.push({ ...item, klines });
     }
     
-    // If whole chunk failed, we might be blocked globally. Pause.
+    // If whole chunk failed, pause briefly
     if (chunkFailures === chunk.length) {
-      const blockedUntil = Math.max(yahooRateLimitUntil, finMindRateLimitUntil, stooqRateLimitUntil);
+      const blockedUntil = Math.max(yahooRateLimitUntil, finMindRateLimitUntil);
       if (blockedUntil > Date.now()) {
-        const waitMins = Math.ceil((blockedUntil - Date.now()) / 60000);
-        console.warn(`[Market Sync Blocked] All stems in chunk failed. API blocks active. Pausing for ${waitMins} min(s)...`);
-        await new Promise(r => setTimeout(r, Math.min(blockedUntil - Date.now(), 60000))); // Max 1 min pause per loop to re-check
+        console.warn(`[Market Sync Paused] APIs partially blocked. Pacing for 30s...`);
+        await new Promise(r => setTimeout(r, 30000));
       }
     }
     
@@ -1291,7 +1326,10 @@ async function performMarketSync(): Promise<boolean> {
       
       // If we have some data, update a "temp" cache so users see progress
       if (finalTwList.length > 5) {
-        const tempResults = finalTwList.map(s => computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 50, s.industry));
+        const tempResults = finalTwList.map(s => {
+          const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
+          return computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, 50, s.industry, undefined, prev);
+        });
         const filteredTemp = tempResults.filter(Boolean);
         marketDataCache = {
           ...marketDataCache,
@@ -1483,8 +1521,12 @@ app.get("/api/market-data", async (req, res) => {
     
     // Return what we have
     if (marketDataCache) {
+      const stripKlines = (stocks: any[]) => stocks.map(({ klines, ...rest }) => rest);
+      
       return res.json({ 
         ...marketDataCache, 
+        twStocks: stripKlines(marketDataCache.twStocks || []),
+        usStocks: stripKlines(marketDataCache.usStocks || []),
         isBackgroundSyncing: globalSyncingFlag || isSyncing,
         message: globalSyncingFlag ? `掃描進度: ${marketDataCache.lastUpdated}` : undefined
       });
@@ -1514,6 +1556,30 @@ app.post("/api/scan-market", async (req, res) => {
   } catch (error: any) {
     console.error("[POST scan-market Error]", error.message || error);
     res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
+  }
+});
+
+app.get("/api/stock-klines/:ticker", async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    if (!marketDataCache) {
+      loadCacheFromFile();
+    }
+    
+    if (!marketDataCache) {
+      return res.status(404).json({ error: "Data not available yet" });
+    }
+    
+    const stock = marketDataCache.twStocks.find(s => s.ticker === ticker) || 
+                  marketDataCache.usStocks.find(s => s.ticker === ticker);
+                  
+    if (!stock) {
+      return res.status(404).json({ error: "Stock not found" });
+    }
+    
+    res.json(stock.klines || []);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 

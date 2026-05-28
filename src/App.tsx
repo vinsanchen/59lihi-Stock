@@ -92,6 +92,8 @@ export default function App() {
   // Data storage
   const [twStocks, setTwStocks] = useState<StockAnalysis[]>([]);
   const [usStocks, setUsStocks] = useState<StockAnalysis[]>([]);
+  const [activeKlines, setActiveKlines] = useState<any[]>([]);
+  const [loadingKlines, setLoadingKlines] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -163,6 +165,23 @@ export default function App() {
   }, [weights]);
 
   // Quote auto-cycler
+  useEffect(() => {
+    if (!selectedTicker) return;
+    
+    let active = true;
+    const fetchK = async () => {
+      setLoadingKlines(true);
+      const k = await DataProvider.fetchKlines(selectedTicker);
+      if (active) {
+        setActiveKlines(k);
+        setLoadingKlines(false);
+      }
+    };
+    
+    fetchK();
+    return () => { active = false; };
+  }, [selectedTicker]);
+
   useEffect(() => {
     const timer = setInterval(() => {
       setQuoteIdx((prev) => (prev + 1) % MINERVINI_QUOTES.length);
@@ -345,7 +364,8 @@ export default function App() {
 
         // 8. 最近 200 日資料完整
         if (liquidityParams.require200Days) {
-          if (!s.klines || s.klines.length < 200) return false;
+          const count = s.klineCount || (s.klines ? s.klines.length : 0);
+          if (count < 200) return false;
         }
 
         return true;
@@ -1730,7 +1750,7 @@ export default function App() {
                 {/* Responsive Chart Column (7 cols) */}
                 <div className="lg:col-span-7 flex flex-col gap-2">
                   <div className="h-[480px]">
-                    <KLineChart stock={activeStock} />
+                    <KLineChart stock={{ ...activeStock, klines: activeKlines }} />
                   </div>
                   <div className="px-4 py-3 rounded-lg bg-[#161B22]/50 border border-[#30363D] text-[10px] text-gray-550 leading-relaxed font-mono flex items-center gap-1.5">
                     <InfoIcon className="w-3.5 h-3.5 text-gray-400" />

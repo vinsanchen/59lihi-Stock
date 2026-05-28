@@ -54,6 +54,10 @@ export interface StockAnalysis {
   sepaScore: SEPAScoreResult;
   pattern: string;         // VCP 型態名稱
   buyPoint: number;        // Pivot 突破價
+  originalPivot?: number;  // 原始突破 Pivot
+  pivotCreationDate?: string; // Pivot 建立日期
+  pivotStatus?: 'Active' | 'Fixed' | 'Breakout'; // Pivot 狀態
+  isNewBase?: boolean;     // 是否形成新 Base
   stopLoss: number;        // 初始停損價
   riskPercent: number;     // 停損百分比
   status: "接近買點" | "已突破" | "可觀察" | "過度延伸，不建議追" | "型態尚未完成" | "不符合";
@@ -66,7 +70,11 @@ export interface StockAnalysis {
   targetPrice2: number;    // 第二目標價
   pctToBuyPoint: number;   // 距離買點還差幾 %
   vcpPhaseDesc: string;    // VCP 物理細節描述 (如: 3聲收縮 22% -> 11% -> 3%)
-  klines: KLine[];
+  lastMA50?: number;
+  lastMA150?: number;
+  lastMA200?: number;
+  klineCount?: number;
+  klines?: KLine[];
 }
 
 export interface SepaWeights {

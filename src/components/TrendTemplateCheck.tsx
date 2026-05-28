@@ -13,10 +13,9 @@ interface TrendTemplateCheckProps {
 
 export default function TrendTemplateCheck({ stock }: TrendTemplateCheckProps) {
   const t = stock.trendTemplate;
-  const lastK = stock.klines[stock.klines.length - 1];
-  const ma50Value = lastK?.ma50 || 0;
-  const ma150Value = lastK?.ma150 || 0;
-  const ma200Value = lastK?.ma200 || 0;
+  const ma50Value = stock.lastMA50 || 0;
+  const ma150Value = stock.lastMA150 || 0;
+  const ma200Value = stock.lastMA200 || 0;
 
   // Percentage from 52W low
   const low52WDiff = ((stock.lastClose - stock.low52Week) / stock.low52Week) * 100;
