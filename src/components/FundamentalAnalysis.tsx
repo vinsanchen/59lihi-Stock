@@ -71,6 +71,21 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
     }
   };
 
+  const maxRevenueYoY = Math.max(...data.revenueList.map(r => Math.abs(r.yoy || 0)), 20);
+
+  const formatDate = (dateStr: string) => {
+    // Format: 2024-05-01 -> 24/05
+    try {
+        const parts = dateStr.split('-');
+        if (parts.length >= 2) {
+            return `${parts[0].substring(2)}/${parts[1]}`;
+        }
+        return dateStr;
+    } catch {
+        return dateStr;
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in py-4">
       <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
@@ -93,7 +108,7 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
                 {data.epsList.map((eps, i) => (
                     <div key={i} className="flex items-center justify-between bg-black/20 p-2.5 rounded-lg border border-slate-800/40">
                         <div className="flex flex-col">
-                            <span className="text-[10px] font-mono text-gray-500 font-bold uppercase">{eps.quarter}</span>
+                            <span className="text-[10px] font-mono text-gray-500 font-bold uppercase">{eps.quarter.substring(0, 7)}</span>
                             <span className="text-sm font-mono font-black text-gray-100">{eps.eps.toFixed(2)}</span>
                         </div>
                         <div className="text-right">
@@ -124,36 +139,41 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
                 </div>
             </div>
 
-            <div className="h-[120px] flex items-end justify-between gap-1 px-1">
-                {data.revenueList.slice(0, 12).reverse().map((rev, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group relative">
-                        <div className="absolute bottom-full mb-1 bg-black text-[9px] px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 border border-slate-700">
-                            {rev.yoy >= 0 ? "+" : ""}{rev.yoy}%
+            <div className="h-[130px] flex items-end justify-between gap-1 px-1 pt-4">
+                {data.revenueList.slice(0, 12).reverse().map((rev, i) => {
+                    const absYoY = Math.abs(rev.yoy || 0);
+                    const heightPercent = (absYoY / maxRevenueYoY) * 100;
+                    
+                    return (
+                        <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group relative">
+                            <div className="absolute bottom-full mb-1 bg-black text-[9px] px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 border border-slate-700">
+                                {rev.yoy >= 0 ? "+" : ""}{rev.yoy}%
+                            </div>
+                            <div 
+                                className={`w-full rounded-t-sm transition-all duration-300 ${rev.yoy >= 50 ? "bg-emerald-500" : rev.yoy >= 25 ? "bg-emerald-500/60" : rev.yoy >= 0 ? "bg-emerald-500/30" : "bg-rose-500/40"}`}
+                                style={{ height: `${Math.max(4, heightPercent)}%` }}
+                            ></div>
+                            <span className="text-[7px] font-mono font-bold text-gray-600 scale-90 rotate-[-45deg] origin-top-left mt-2">{formatDate(rev.period)}</span>
                         </div>
-                        <div 
-                            className={`w-full rounded-t-sm transition-all duration-300 ${rev.yoy >= 50 ? "bg-emerald-500" : rev.yoy >= 25 ? "bg-emerald-500/60" : rev.yoy >= 0 ? "bg-emerald-500/30" : "bg-rose-500/40"}`}
-                            style={{ height: `${Math.min(100, Math.max(5, Math.abs(rev.yoy) * 1.5))}px` }}
-                        ></div>
-                        <span className="text-[8px] font-mono font-bold text-gray-600 scale-90">{rev.period.substring(5)}</span>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-2 mt-4">
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
-                    <span className="block text-[8px] text-gray-500 font-bold uppercase">最新營收 YoY</span>
+                    <span className="block text-[8px] text-gray-500 font-bold uppercase">{data.revenueList[0] ? formatDate(data.revenueList[0].period) : "最新"} YoY</span>
                     <span className={`text-sm font-mono font-black ${(data.revenueList[0]?.yoy ?? 0) >= 25 ? "text-emerald-400" : "text-gray-200"}`}>
                         {data.revenueList[0] ? `${data.revenueList[0].yoy}%` : "資料不足"}
                     </span>
                 </div>
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
-                    <span className="block text-[8px] text-gray-500 font-bold uppercase">前月營收 YoY</span>
+                    <span className="block text-[8px] text-gray-500 font-bold uppercase">{data.revenueList[1] ? formatDate(data.revenueList[1].period) : "前月"} YoY</span>
                     <span className="text-sm font-mono font-black text-gray-200">
                         {data.revenueList[1] ? `${data.revenueList[1].yoy}%` : "資料不足"}
                     </span>
                 </div>
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
-                    <span className="block text-[8px] text-gray-500 font-bold uppercase">前前月 YoY</span>
+                    <span className="block text-[8px] text-gray-500 font-bold uppercase">{data.revenueList[2] ? formatDate(data.revenueList[2].period) : "前前"} YoY</span>
                     <span className="text-sm font-mono font-black text-gray-200">
                         {data.revenueList[2] ? `${data.revenueList[2].yoy}%` : "資料不足"}
                     </span>
