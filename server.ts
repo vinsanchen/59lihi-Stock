@@ -1251,7 +1251,11 @@ async function performMarketSync(): Promise<boolean> {
     { ticker: "ASML", name: "ASML" },
     { ticker: "MSTR", name: "MicroStrategy" },
     { ticker: "COIN", name: "Coinbase" },
-    { ticker: "PLTR", name: "Palantir" }
+    { ticker: "PLTR", name: "Palantir" },
+    { ticker: "NFLX", name: "Netflix" },
+    { ticker: "ORCL", name: "Oracle" },
+    { ticker: "ADBE", name: "Adobe" },
+    { ticker: "CRM", name: "Salesforce" }
   ];
 
   const finalTwList: any[] = [];
@@ -1260,25 +1264,39 @@ async function performMarketSync(): Promise<boolean> {
   
   // 4. Scan US Stocks first (usually faster as it's a smaller universe)
   console.log(`[Market Sync] Scanning ${usUniverse.length} US momentum stocks...`);
+  const usTempList: any[] = [];
   for (const item of usUniverse) {
-    const { klines } = await fetchStockKLines(item.ticker, false, item.name);
-    // Add small delay to avoid rate limit
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    if (klines && klines.length >= 150) {
-      const last = klines[klines.length - 1].close;
-      const getReturn = (days: number) => {
-        if (klines.length <= days) return 0;
-        const prev = klines[klines.length - days].close;
-        return (last - prev) / prev;
-      };
-      // For US, we use a simple RS rank within this subset for now
-      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-      rsScoreMap[item.ticker] = rsScore;
+    try {
+      const { klines } = await fetchStockKLines(item.ticker, false, item.name);
+      // Pacing for US stocks to avoid Yahoo Finance cloud IP blocking
+      await new Promise(resolve => setTimeout(resolve, 1200));
       
-      const analyzed = computeStockAnalysis(item.ticker, item.name, "NASDAQ", "US", klines, 85, "科技");
-      if (analyzed) finalUsList.push(analyzed);
+      if (klines && klines.length >= 160) {
+        const last = klines[klines.length - 1].close;
+        const getReturn = (days: number) => {
+          if (klines.length <= days) return 0;
+          const prev = klines[klines.length - days].close;
+          return (last - prev) / prev;
+        };
+        // RS Score formula: 2*Q1_Return + Q2_Return + Q3_Return + Q4_Return
+        const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+        rsScoreMap[item.ticker] = rsScore;
+        usTempList.push({ ...item, klines });
+      } else {
+        console.warn(`[Market Sync Warning] US Ticker ${item.ticker} has insufficient data (${klines?.length || 0} bars). Required: 160`);
+      }
+    } catch (err) {
+      console.error(`[Market Sync Error] Failed to scan US Ticker ${item.ticker}:`, err);
     }
+  }
+
+  // Calculate RS Ranks for the US subset
+  const usRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+  for (const item of usTempList) {
+    const rankIndex = usRSKeys.indexOf(item.ticker);
+    const rs = Math.floor((rankIndex / Math.max(1, usRSKeys.length)) * 99) + 1;
+    const analyzed = computeStockAnalysis(item.ticker, item.name, "NASDAQ", "US", item.klines, rs, "科技/增長");
+    if (analyzed) finalUsList.push(analyzed);
   }
 
   // 5. Scan all 1000+ TWSE stocks

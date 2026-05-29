@@ -1207,43 +1207,6 @@ export default function App() {
           {activeTab === "us" && (
             <div className="space-y-6 flex-1 flex flex-col" id="us-tab">
               
-              {/* 1. US Market Top 20 Dashboard Header */}
-              <div className="flex flex-wrap items-center justify-between gap-4 bg-[#161B22]/40 p-4 rounded-xl border border-[#30363D]">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center border border-indigo-500/20">
-                    <Award className="w-6 h-6 text-indigo-400" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
-                      US Market SEPA 領先群 <span className="text-[10px] bg-indigo-500 text-white px-1.5 rounded-sm font-mono mt-0.5">TOP 20</span>
-                    </h2>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] text-gray-500">當前篩選強度: {usFilters.minScore} 分以上</span>
-                      <span className="w-1 h-1 rounded-full bg-gray-700"></span>
-                      <span className="text-[11px] text-indigo-400 font-mono">母體池掃描個股: {DataProvider.getUsStocks(weights).length} 檔</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase mr-2 font-mono">Sorting By:</span>
-                  <div className="flex bg-black/30 p-1 rounded-lg border border-slate-800">
-                    <button 
-                      onClick={() => handleThSort("us", "sepaScoreTotal")}
-                      className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${usFilters.sortField === "sepaScoreTotal" ? "bg-indigo-600 text-white" : "text-gray-500 hover:text-white"}`}
-                    >
-                      SEPA 總分
-                    </button>
-                    <button 
-                      onClick={() => handleThSort("us", "rsRanking")}
-                      className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${usFilters.sortField === "rsRanking" ? "bg-indigo-600 text-white" : "text-gray-500 hover:text-white"}`}
-                    >
-                      RS 強度
-                    </button>
-                  </div>
-                </div>
-              </div>
-
               {/* Data Status Summary Bar */}
               <div className="bg-indigo-950/15 border border-indigo-900/40 p-4 rounded-xl space-y-2">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
