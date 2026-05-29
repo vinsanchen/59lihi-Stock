@@ -176,7 +176,7 @@ export default function App() {
   const [aiReportCache, setAiReportCache] = useState<{ [ticker: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
 
-  // Initialize stocks lists using live API
+  // Unified single polling and background sync updater
   useEffect(() => {
     let active = true;
     let pollInterval: any = null;
@@ -206,57 +206,26 @@ export default function App() {
           setError(null);
         }
       } catch (err: any) {
+        console.error("[Polling Error]", err);
         if (active) {
           setError(err.message || "市場資料同步失敗，請檢查資料來源。");
           setRefreshing(false);
+          setSyncProgress(null);
         }
       }
     };
 
     loadData();
-    pollInterval = setInterval(() => loadData(false), 5000);
+    
+    // Dynamic polling interval: 3 seconds during active scanning, 15 seconds when idle
+    const intervalMs = refreshing ? 3000 : 15000;
+    pollInterval = setInterval(() => loadData(false), intervalMs);
 
     return () => {
       active = false;
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [weights]);
-
-  // Fast polling when scanning is in progress to show real-time progress bar/percentage smoothly
-  useEffect(() => {
-    if (!refreshing) return;
-
-    let active = true;
-    const fastPoll = async () => {
-      try {
-        const result = await DataProvider.loadFromAPI(false, weights);
-        if (active) {
-          const isSyncingNow = result.isSyncing;
-          setRefreshing(isSyncingNow);
-          setSyncProgress(DataProvider.getSyncProgress());
-          
-          if (!isSyncingNow) {
-            // Re-fetch final data and lastUpdated upon completion
-            const tw = DataProvider.getTwStocks(weights);
-            const us = DataProvider.getUsStocks(weights);
-            setTwStocks(tw);
-            setUsStocks(us);
-            setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
-            setPoolCount(DataProvider.getStockPoolCount());
-          }
-        }
-      } catch (err) {
-        console.error("Fast poll error", err);
-      }
-    };
-
-    // Poll every 1 second during active scans
-    const interval = setInterval(fastPoll, 1000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [refreshing, weights]);
+  }, [weights, refreshing]);
 
   // Quote auto-cycler
   useEffect(() => {
