@@ -58,6 +58,9 @@ export interface FundamentalData {
   industryTotalStocks: number;
   industryRsRanking: number;
   industrySepaRanking: number;
+  industryStrength?: number; // Industry RS 0~99
+  industryGlobalRank?: number; // Industry Rank among all industries
+  totalIndustries?: number;
   fundamentalScore: number;
   fundamentalRating: "優秀" | "普通" | "偏弱";
 }

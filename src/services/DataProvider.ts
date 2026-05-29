@@ -137,6 +137,40 @@ export class DataProvider {
     }
   }
 
+  public static async fetchStockListSimple(): Promise<{ ticker: string, name: string }[]> {
+    try {
+        const res = await fetch("/api/stock-list-simple");
+        return await res.json();
+    } catch (err) {
+        console.error("[DataProvider] Failed to fetch simple stock list:", err);
+        return [];
+    }
+  }
+
+  public static async getIndustryMapping(): Promise<{ [ticker: string]: string }> {
+    try {
+        const res = await fetch("/api/industry-mapping");
+        return await res.json();
+    } catch (err) {
+        console.error("[DataProvider] Failed to get industry mapping:", err);
+        return {};
+    }
+  }
+
+  public static async saveIndustryMapping(mapping: { [ticker: string]: string }): Promise<boolean> {
+    try {
+        const res = await fetch("/api/industry-mapping", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mapping })
+        });
+        return res.ok;
+    } catch (err) {
+        console.error("[DataProvider] Failed to save industry mapping:", err);
+        return false;
+    }
+  }
+
   public static getTwStocks(weights?: SepaWeights): StockAnalysis[] {
     if (weights) {
       this.weights = weights;

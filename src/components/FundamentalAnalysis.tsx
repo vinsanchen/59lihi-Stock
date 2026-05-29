@@ -142,20 +142,20 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
             <div className="grid grid-cols-3 gap-2">
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
                     <span className="block text-[8px] text-gray-500 font-bold uppercase">最新營收 YoY</span>
-                    <span className={`text-sm font-mono font-black ${data.revenueList[0].yoy >= 25 ? "text-emerald-400" : "text-gray-200"}`}>
-                        {data.revenueList[0].yoy}%
+                    <span className={`text-sm font-mono font-black ${(data.revenueList[0]?.yoy ?? 0) >= 25 ? "text-emerald-400" : "text-gray-200"}`}>
+                        {data.revenueList[0] ? `${data.revenueList[0].yoy}%` : "資料不足"}
                     </span>
                 </div>
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
                     <span className="block text-[8px] text-gray-500 font-bold uppercase">前月營收 YoY</span>
                     <span className="text-sm font-mono font-black text-gray-200">
-                        {data.revenueList[1].yoy}%
+                        {data.revenueList[1] ? `${data.revenueList[1].yoy}%` : "資料不足"}
                     </span>
                 </div>
                 <div className="bg-black/20 p-2 rounded-lg border border-slate-800">
                     <span className="block text-[8px] text-gray-500 font-bold uppercase">前前月 YoY</span>
                     <span className="text-sm font-mono font-black text-gray-200">
-                        {data.revenueList[2].yoy}%
+                        {data.revenueList[2] ? `${data.revenueList[2].yoy}%` : "資料不足"}
                     </span>
                 </div>
             </div>
@@ -171,27 +171,38 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
             <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-5 flex-1 space-y-4">
                 <div className="flex items-center gap-2">
                     <Award className="w-4 h-4 text-amber-500" />
-                    <h4 className="text-xs font-bold text-gray-200 uppercase tracking-wider">產業排名與地位</h4>
+                    <h4 className="text-xs font-bold text-gray-200 uppercase tracking-wider">產業排名與數據</h4>
                 </div>
 
                 <div className="space-y-3">
                     <div className="bg-black/20 p-3 rounded-xl border border-slate-800">
                         <span className="text-[10px] text-gray-500 block font-bold uppercase">產業分類</span>
                         <span className="text-sm font-bold text-indigo-400">{data.industry}</span>
-                        <span className="text-[10px] text-gray-600 block mt-1">樣本總數：{data.industryTotalStocks} 檔</span>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <div className="flex-1 bg-black/20 p-2.5 rounded-xl border border-slate-800 text-center">
-                            <span className="text-[10px] text-gray-500 block font-bold uppercase">產業 RS 排名</span>
-                            <span className="text-lg font-mono font-black text-white">{data.industryRsRanking} / {data.industryTotalStocks}</span>
+                        <div className="flex items-center justify-between mt-1">
+                            <span className="text-[10px] text-gray-600">樣本總數：{data.industryTotalStocks} 檔</span>
+                            {data.industry === "未分類" && <span className="text-[9px] text-rose-500/70 animate-pulse underline">請手動分類以計算強度</span>}
                         </div>
                     </div>
-                    
-                    <div className="flex gap-2">
-                        <div className="flex-1 bg-black/20 p-2.5 rounded-xl border border-slate-800 text-center">
-                            <span className="text-[10px] text-gray-500 block font-bold uppercase">SEPA 分數排名</span>
-                            <span className="text-lg font-mono font-black text-emerald-400">{data.industrySepaRanking} / {data.industryTotalStocks}</span>
+
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-black/20 p-2.5 rounded-xl border border-slate-800 text-center">
+                            <span className="text-[8px] text-gray-500 block font-bold uppercase">產業排名</span>
+                            <span className="text-sm font-mono font-black text-white">{data.industryGlobalRank || "-"} / {data.totalIndustries || "-"}</span>
+                        </div>
+                        <div className="bg-black/20 p-2.5 rounded-xl border border-slate-800 text-center">
+                            <span className="text-[8px] text-gray-500 block font-bold uppercase">產業強度 RS</span>
+                            <span className={`text-sm font-mono font-black ${data.industryStrength && data.industryStrength >= 80 ? "text-emerald-400" : "text-amber-400"}`}>{data.industryStrength || "-"}</span>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <div className="bg-black/20 p-2.5 rounded-xl border border-slate-800 flex justify-between items-center px-4">
+                            <span className="text-[10px] text-gray-500 font-bold uppercase">產業內 RS 排名</span>
+                            <span className="text-sm font-mono font-black text-white">{data.industryRsRanking} / {data.industryTotalStocks}</span>
+                        </div>
+                        <div className="bg-black/20 p-2.5 rounded-xl border border-slate-800 flex justify-between items-center px-4">
+                            <span className="text-[10px] text-gray-500 font-bold uppercase">產業內 SEPA 排名</span>
+                            <span className="text-sm font-mono font-black text-emerald-400">{data.industrySepaRanking} / {data.industryTotalStocks}</span>
                         </div>
                     </div>
                 </div>

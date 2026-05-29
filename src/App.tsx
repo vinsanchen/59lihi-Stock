@@ -40,6 +40,7 @@ import KLineChart from "./components/KLineChart";
 import SepaScores from "./components/SepaScores";
 import TrendTemplateCheck from "./components/TrendTemplateCheck";
 import FundamentalAnalysis from "./components/FundamentalAnalysis";
+import IndustryManager from "./components/IndustryManager";
 
 // Legendary Mark Minervini principles to rotate
 const MINERVINI_QUOTES = [
@@ -60,7 +61,7 @@ const TOP_INDUSTRIES = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
+  const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings" | "industry">("watchlist");
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
     try {
       return localStorage.getItem("sepa_show_sidebar") !== "false";
@@ -699,6 +700,16 @@ export default function App() {
               }`}
             >
               單股詳細分析
+            </button>
+            <button
+              onClick={() => setActiveTab("industry")}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide transition-all ${
+                activeTab === "industry"
+                  ? "bg-slate-800 text-white shadow-sm border border-slate-700"
+                  : "text-[#8B949E] hover:text-[#E6EDF3]"
+              }`}
+            >
+              產業分類
             </button>
             <button
               onClick={() => setActiveTab("settings")}
@@ -2415,6 +2426,13 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* Industry Mapping Manager */}
+          {activeTab === "industry" && (
+            <div className="max-w-4xl mx-auto py-6">
+               <IndustryManager />
             </div>
           )}
 
