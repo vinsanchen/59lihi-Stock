@@ -114,9 +114,6 @@ export default function App() {
   const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [globalStatus, setGlobalStatus] = useState<any>({});
-
-  const getStatus = (key: string) => globalStatus[key] || "";
 
   // Filter systems
   const [twFilters, setTwFilters] = useState<FilterSettings>({
@@ -159,7 +156,6 @@ export default function App() {
           setUsStocks(us);
           setLastUpdated(DataProvider.getLastUpdated());
           setPoolCount(DataProvider.getStockPoolCount());
-          setGlobalStatus(DataProvider.getSystemStatus());
           setSyncMessage(result.message || null);
           setRefreshing(result.isSyncing);
 
@@ -689,29 +685,17 @@ export default function App() {
 
         {/* Sync panel actions */}
         <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-4 bg-black/40 border border-[#30363D] px-3 py-1.5 rounded-xl">
-             <div className="flex flex-col border-r border-[#30363D] pr-3">
-               <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold leading-tight">資料庫狀態</span>
-               <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${getStatus('tw_data_status') === '🟢 正常' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></span>
-                  <span className="text-[10px] font-bold text-gray-300">{getStatus('tw_data_status') || '待更新'}</span>
-               </div>
-             </div>
-             <div className="flex flex-col border-r border-[#30363D] pr-3">
-               <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold leading-tight">Yahoo / TWSE</span>
-               <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[10px] font-mono text-gray-400">{getStatus('yahoo_status') || '🟢'} / {getStatus('twse_status') || '🟢'}</span>
-               </div>
-             </div>
-             <div className="flex flex-col">
-               <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold leading-tight">最後同步回報</span>
-               <span className="text-[10px] font-mono text-[#8B949E] font-medium mt-0.5">{lastUpdated}</span>
-             </div>
+          <div className="hidden sm:block text-right">
+            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
+            <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
+            {refreshing && syncMessage && (
+              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
+            )}
           </div>
 
           <button
             onClick={handleRefresh}
-            disabled={refreshing || globalStatus.sync_progress?.includes('%') && globalStatus.sync_progress !== '100%'}
+            disabled={refreshing}
             className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
@@ -728,19 +712,19 @@ export default function App() {
           <aside className="w-full lg:w-72 bg-[#161B22]/65 border-b lg:border-b-0 lg:border-r border-[#30363D] p-4 flex flex-col gap-6 shrink-0 overflow-y-auto lg:max-h-[calc(100vh-65px)] animate-in slide-in-from-left duration-300">
             
             {/* Sync Progress Indicator if refreshing */}
-            {(refreshing || globalStatus.sync_progress?.includes('%') && globalStatus.sync_progress !== '100%') && (
+            {refreshing && (
             <div className="bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-lg space-y-2 animate-pulse">
               <div className="flex items-center justify-between text-[10px] text-indigo-400 font-bold">
                 <span className="flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" /> 背景同步中
                 </span>
-                <span>{globalStatus.sync_progress || "掃描中..."}</span>
+                <span>掃描中...</span>
               </div>
               <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: globalStatus.sync_progress || '5%' }}></div>
+                <div className="h-full bg-indigo-500 animate-[sync-progress_10s_ease-in-out_infinite]" style={{ width: '40%' }}></div>
               </div>
               <p className="text-[10px] text-gray-400 font-medium leading-tight">
-                {syncMessage || "正在背景分批獲取最新數據... 獲獲完成後將自動刷新。"}
+                {syncMessage || "正在背景分批獲取最新數據... 獲取完成後將自動刷新。"}
               </p>
               <p className="text-[9px] text-gray-500 italic">
                 由於交易所流量限制，完整更新約需 5~10 分鐘。

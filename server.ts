@@ -9,116 +9,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import Database from 'better-sqlite3';
-import cron from 'node-cron';
 
 dotenv.config();
-
-const dbPath = path.join(process.cwd(), 'market.db');
-const db = new Database(dbPath);
-
-// Initialize DB schema
-function initDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS stocks (
-      ticker TEXT PRIMARY KEY,
-      name TEXT,
-      market TEXT,
-      industry TEXT,
-      is_active INTEGER,
-      updated_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS daily_bars (
-      ticker TEXT,
-      trade_date TEXT,
-      open REAL,
-      high REAL,
-      low REAL,
-      close REAL,
-      volume REAL,
-      turnover REAL,
-      source TEXT,
-      created_at TEXT,
-      PRIMARY KEY (ticker, trade_date)
-    );
-
-    CREATE TABLE IF NOT EXISTS sepa_scores (
-      ticker TEXT PRIMARY KEY,
-      trade_date TEXT,
-      close REAL,
-      ma50 REAL,
-      ma150 REAL,
-      ma200 REAL,
-      high_52w REAL,
-      low_52w REAL,
-      rs_rank REAL,
-      pivot REAL,
-      pivot_distance REAL,
-      sepa_score REAL,
-      trend_template_pass INTEGER,
-      pattern TEXT,
-      status TEXT,
-      data_freshness TEXT,
-      price_source TEXT,
-      indicator_source TEXT,
-      updated_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS watchlists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ticker TEXT,
-      trade_date TEXT,
-      category TEXT,
-      sepa_score REAL,
-      pivot_distance REAL,
-      note TEXT,
-      created_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS system_status (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TEXT
-    );
-  `);
-
-  const keys = [
-    'tw_last_data_date',
-    'tw_last_sync_time',
-    'tw_data_source',
-    'tw_data_status',
-    'yahoo_status',
-    'twse_status',
-    'cache_status',
-    'stock_count',
-    'sync_progress'
-  ];
-
-  const stmt = db.prepare('INSERT OR IGNORE INTO system_status (key, value, updated_at) VALUES (?, ?, ?)');
-  const now = new Date().toISOString();
-  for (const key of keys) {
-    stmt.run(key, '', now);
-  }
-}
-
-initDb();
-
-// DB Helpers
-const updateStatus = (key: string, value: string) => {
-  db.prepare('UPDATE system_status SET value = ?, updated_at = ? WHERE key = ?')
-    .run(String(value), new Date().toISOString(), key);
-};
-
-const getStatus = (key: string) => {
-  const row = db.prepare('SELECT value FROM system_status WHERE key = ?').get(key) as any;
-  return row ? row.value : '';
-};
-
-const getAllStatus = () => {
-  const rows = db.prepare('SELECT key, value FROM system_status').all() as any[];
-  return rows.reduce((acc, r) => ({ ...acc, [r.key]: r.value }), {});
-};
 
 const app = express();
 const PORT = 3000;
@@ -1310,301 +1202,105 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
   return { klines: [], isMock: false };
 }
 
-// DB Interaction Helpers
-function saveStockDataToDb(analyzed: any, klines: any[], freshness: string, priceSource: string) {
-  try {
-    // 1. Save stock info
-    db.prepare(`
-      INSERT INTO stocks (ticker, name, market, industry, is_active, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(ticker) DO UPDATE SET
-        name = excluded.name,
-        industry = excluded.industry,
-        updated_at = excluded.updated_at
-    `).run(analyzed.ticker, analyzed.name, analyzed.marketType, analyzed.subIndustry, 1, new Date().toISOString());
-
-    // 2. Save bars (incremental - save last 30 bars)
-    const insertBar = db.prepare(`
-      INSERT OR REPLACE INTO daily_bars (ticker, trade_date, open, high, low, close, volume, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const now = new Date().toISOString();
-    db.transaction(() => {
-      for (const bar of klines.slice(-30)) {
-        insertBar.run(analyzed.ticker, bar.date, bar.open, bar.high, bar.low, bar.close, Math.round(bar.volume), priceSource, now);
-      }
-    })();
-
-    // 3. Save SEPA scores
-    db.prepare(`
-      INSERT OR REPLACE INTO sepa_scores (
-        ticker, trade_date, close, ma50, ma150, ma200, high_52w, low_52w,
-        rs_rank, pivot, pivot_distance, sepa_score, trend_template_pass,
-        pattern, status, data_freshness, price_source, indicator_source, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      analyzed.ticker,
-      klines[klines.length - 1].date,
-      analyzed.lastClose,
-      analyzed.lastMA50,
-      analyzed.lastMA150,
-      analyzed.lastMA200,
-      analyzed.high52Week,
-      analyzed.low52Week,
-      analyzed.rsRanking,
-      analyzed.buyPoint,
-      analyzed.pctToBuyPoint,
-      analyzed.sepaScore.total,
-      analyzed.trendTemplate.passed ? 1 : 0,
-      analyzed.pattern,
-      analyzed.status,
-      freshness,
-      priceSource,
-      'Calculated',
-      new Date().toISOString()
-    );
-
-    // 4. Update Watchlist Table
-    if (analyzed.watchlistCategoryEn && analyzed.watchlistCategoryEn !== 'Regular Watch') {
-      db.prepare(`
-        INSERT INTO watchlists (ticker, trade_date, category, sepa_score, pivot_distance, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        analyzed.ticker,
-        klines[klines.length - 1].date,
-        analyzed.watchlistCategoryEn,
-        analyzed.sepaScore.total,
-        analyzed.pctToBuyPoint,
-        new Date().toISOString()
-      );
-    }
-  } catch (err) {
-    console.error(`[DB Save Error] ${analyzed.ticker}:`, err);
-  }
-}
 
 // Perform market sync across all stocks
 async function performMarketSync(): Promise<boolean> {
   if (globalSyncingFlag) return false;
   globalSyncingFlag = true;
-  updateStatus('sync_progress', '1%');
   
   try {
-    console.log("[Market Sync] Starting DB-driven incremental sync...");
-    updateStatus('tw_data_status', '🔵 同步中');
-
-    // 1. Fetch TAIEX Index
+    console.log("[Market Sync] Starting legacy sync process...");
+    
+    // Fetch Indices
     const indexData = await fetchIndexDataBulk();
-    updateStatus('cache_status', '🟢 活躍');
-
-    // 2. TWSE Fallback data (Today's snapshots)
-    const twseSnapshots = await fetchTwseFallback();
-    
-    // 3. Markets
+    const twseStockListFull = await fetchTWSEList();
     const usUniverse = [
-      { ticker: "NVDA", name: "Nvidia", industry: "AI Chip" }, 
-      { ticker: "TSLA", name: "Tesla", industry: "EV" }, 
-      { ticker: "AAPL", name: "Apple", industry: "Tech" },
-      { ticker: "MSFT", name: "Microsoft", industry: "Software" }, 
-      { ticker: "AMD", name: "AMD", industry: "Semiconductor" }, 
-      { ticker: "AMZN", name: "Amazon", industry: "Retail" },
-      { ticker: "GOOGL", name: "Google", industry: "Software" }, 
-      { ticker: "META", name: "Meta", industry: "Social" }, 
-      { ticker: "AVGO", name: "Broadcom", industry: "Semiconductor" },
-      { ticker: "SMCI", name: "SuperMicro", industry: "Server" }, 
-      { ticker: "ARM", name: "ARM Holdings", industry: "Semiconductor" }, 
-      { ticker: "MU", name: "Micron", industry: "Memory" },
-      { ticker: "ASML", name: "ASML", industry: "Semiconductor" }, 
-      { ticker: "MSTR", name: "MicroStrategy", industry: "Tech" }, 
-      { ticker: "COIN", name: "Coinbase", industry: "Fintech" },
-      { ticker: "PLTR", name: "Palantir", industry: "Software" }, 
-      { ticker: "NFLX", name: "Netflix", industry: "Entertainment" }, 
-      { ticker: "ORCL", name: "Oracle", industry: "Software" },
-      { ticker: "ADBE", name: "Adobe", industry: "Software" }, 
-      { ticker: "CRM", name: "Salesforce", industry: "Software" }
+      { ticker: "NVDA", name: "Nvidia" }, { ticker: "TSLA", name: "Tesla" }, { ticker: "AAPL", name: "Apple" },
+      { ticker: "MSFT", name: "Microsoft" }, { ticker: "AMD", name: "AMD" }, { ticker: "AMZN", name: "Amazon" },
+      { ticker: "GOOGL", name: "Google" }, { ticker: "META", name: "Meta" }, { ticker: "AVGO", name: "Broadcom" },
+      { ticker: "PLTR", name: "Palantir" }
     ];
-    
-    twseStockList = await fetchTWSEList();
+
+    const finalTwList: any[] = [];
+    const finalUsList: any[] = [];
     const rsScoreMap: Record<string, number> = {};
-    const stockBars: Record<string, any[]> = {};
 
-    // --- US Stocks Sync ---
-    console.log("[Market Sync] Syncing US Universe...");
+    // US Sync
     for (const item of usUniverse) {
-      try {
-        const existingBars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(item.ticker) as any[];
-        let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
-        
-        const lastDate = finalKlines.length > 0 ? finalKlines[finalKlines.length - 1].date : '1970-01-01';
-        const todayStr = new Date().toISOString().split('T')[0];
-
-        if (lastDate < todayStr) {
-          const { klines } = await fetchStockKLines(item.ticker, false, item.name);
-          if (klines && klines.length > 0) finalKlines = klines;
-          await new Promise(r => setTimeout(r, 1200));
-        }
-
-        if (finalKlines.length >= 100) {
-          const last = finalKlines[finalKlines.length - 1].close;
-          const getReturn = (days: number) => {
-            if (finalKlines.length <= days) return 0;
-            const prev = finalKlines[finalKlines.length - days].close;
-            return (last - prev) / prev;
-          };
-          rsScoreMap[item.ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-          stockBars[item.ticker] = finalKlines;
-        }
-      } catch (err) {
-        console.error(`[US Sync Error] ${item.ticker}:`, err);
+      const { klines } = await fetchStockKLines(item.ticker, false, item.name);
+      await new Promise(r => setTimeout(r, 1000));
+      if (klines && klines.length >= 150) {
+        const last = klines[klines.length - 1].close;
+        const getReturn = (days: number) => {
+          if (klines.length <= days) return 0;
+          const prev = klines[klines.length - days].close;
+          return (last - prev) / prev;
+        };
+        rsScoreMap[item.ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+        const analyzed = computeStockAnalysis(item.ticker, item.name, "NASDAQ", "US", klines, 85, "Tech");
+        if (analyzed) finalUsList.push(analyzed);
       }
     }
 
-    // --- TW Stocks Sync ---
-    console.log("[Market Sync] Syncing TWSE Stocks...");
-    const pool = twseStockList.length > 0 ? twseStockList : [{ticker: "2330", name: "台積電", industry: "半導體"}];
-    
-    // Priority tickers to get on screen fast
-    const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669"];
-    const priorityPool = pool.filter(s => priorityTickers.includes(s.ticker));
-    const remainingPool = pool.filter(s => !priorityTickers.includes(s.ticker));
-    const combinedPool = [...priorityPool, ...remainingPool];
-
-    for (let i = 0; i < combinedPool.length; i++) {
-      const item = combinedPool[i];
-      try {
-        const existingBars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(item.ticker) as any[];
-        let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
-        
-        const lastDate = finalKlines.length > 0 ? finalKlines[finalKlines.length - 1].date : '1970-01-01';
-        const todayStr = new Date().toISOString().split('T')[0];
-
-        if (lastDate < todayStr) {
-          const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-          if (klines && klines.length > 0) {
-            finalKlines = klines;
-          } else {
-            // Fallback to TWSE OpenAPI
-            const snap = twseSnapshots[item.ticker];
-            if (snap && snap.close > 0 && finalKlines.length > 0) {
-              finalKlines.push({ 
-                date: todayStr, 
-                close: snap.close, 
-                volume: snap.volume, 
-                high: snap.close, 
-                low: snap.close, 
-                open: snap.close 
-              });
-            }
-          }
-          if (finalKlines.length > existingBars.length) {
-            await new Promise(r => setTimeout(r, 800));
-          }
-        }
-
-        if (finalKlines.length >= 150) {
-          const last = finalKlines[finalKlines.length - 1].close;
-          const getReturn = (days: number) => {
-            if (finalKlines.length <= days) return 0;
-            const prev = finalKlines[finalKlines.length - days].close;
-            return (last - prev) / prev;
-          };
-          rsScoreMap[item.ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-          stockBars[item.ticker] = finalKlines;
-        }
-
-        if (i % 20 === 0) {
-          const progress = Math.round((i / pool.length) * 100);
-          updateStatus('sync_progress', `${progress}%`);
-          updateStatus('stock_count', String(Object.keys(rsScoreMap).length));
-        }
-      } catch (err) {
-        console.error(`[TW Sync Error] ${item.ticker}:`, err);
+    // TW Sync (Limited for reliability)
+    const twPriority = ["2330", "2317", "2454", "2382", "2308", "3231", "6669", "2357"];
+    for (const ticker of twPriority) {
+      const stock = twseStockListFull.find(s => s.ticker === ticker);
+      if (!stock) continue;
+      const { klines } = await fetchStockKLines(ticker, true, stock.name);
+      await new Promise(r => setTimeout(r, 1000));
+      if (klines && klines.length >= 150) {
+        const last = klines[klines.length - 1].close;
+        const getReturn = (days: number) => {
+          if (klines.length <= days) return 0;
+          const prev = klines[klines.length - days].close;
+          return (last - prev) / prev;
+        };
+        rsScoreMap[ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+        const analyzed = computeStockAnalysis(ticker, stock.name, "上市", "TW", klines, 90, stock.industry);
+        if (analyzed) finalTwList.push(analyzed);
       }
     }
 
-    // --- Final RS Ranking and DB Save ---
-    const sortedTickers = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
-    
-    for (const ticker of sortedTickers) {
-      try {
-        const bars = stockBars[ticker];
-        const rankIndex = sortedTickers.indexOf(ticker);
-        const rsRank = Math.floor((rankIndex / Math.max(1, sortedTickers.length)) * 99) + 1;
-        
-        const isTW = !/[a-zA-Z]/.test(ticker);
-        const item = isTW ? pool.find(s => s.ticker === ticker) : usUniverse.find(s => s.ticker === ticker);
-        if (!item || !bars) continue;
+    marketDataCache = {
+      lastUpdated: new Date().toLocaleString(),
+      taiex: indexData.taiex,
+      nasdaq: indexData.nasdaq,
+      twStocks: finalTwList,
+      usStocks: finalUsList,
+      stockPoolCount: twseStockListFull.length
+    };
 
-        const analyzed = computeStockAnalysis(ticker, item.name, isTW ? "上市" : "NASDAQ", isTW ? "TW" : "US", bars, rsRank, (item as any).industry);
-        if (analyzed) {
-           const tracker = watchlistTrackerRegistry[ticker] || { ticker, consecutiveDays: 0 };
-           if (analyzed.trendTemplate.passed) tracker.consecutiveDays++;
-           else tracker.consecutiveDays = 0;
-           watchlistTrackerRegistry[ticker] = tracker;
-
-           const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
-           analyzed.watchlistCategory = cat;
-           analyzed.watchlistCategoryEn = catEn;
-
-           saveStockDataToDb(analyzed, bars, 'fresh', 'Yahoo');
-        }
-      } catch (saveErr) {
-        console.error(`[Final Processing Error] ${ticker}:`, saveErr);
-      }
-    }
-
-    console.log(`[Market Sync Progress] ${i}/${combinedPool.length} stocks processed. Valid: ${Object.keys(rsScoreMap).length}`);
-    updateStatus('tw_last_sync_time', new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }));
-    updateStatus('tw_data_status', '🟢 正常');
-    updateStatus('sync_progress', '100%');
-    console.log("[Market Sync] Sync completed successfully.");
+    saveCacheToFile();
     globalSyncingFlag = false;
     return true;
   } catch (err) {
-    console.error("[Market Sync Error]", err);
-    updateStatus('tw_data_status', '🔴 失敗');
-    updateStatus('sync_progress', 'error');
+    console.error("Sync failed", err);
     globalSyncingFlag = false;
     return false;
   }
 }
+
 // REST route to deliver real market data
 app.get("/api/market-data", async (req, res) => {
   try {
-    const scores = db.prepare('SELECT * FROM sepa_scores').all() as any[];
-    const sysStatus = getAllStatus();
+    if (!marketDataCache) {
+      loadCacheFromFile();
+    }
     
-    // Map back to expected format for the frontend
-    const mapStock = (s: any) => ({
-      ...s,
-      sepaScore: { total: s.sepa_score },
-      trendTemplate: { passed: !!s.trend_template_pass },
-      lastClose: s.close,
-      changePercent: 0, 
-      volume: 0,
-      avgVolume20: 0,
-      low52Week: s.low_52w,
-      high52Week: s.high_52w,
-      buyPoint: s.pivot,
-      pctToBuyPoint: s.pivot_distance,
-      rsRanking: s.rs_rank,
-      status: s.status,
-      statusEn: s.status === '已突破' ? 'Breakout' : (s.status === '接近買點' ? 'Near Pivot' : 'Watch'),
-      industry: s.industry,
-      market: s.marketType || 'TW'
-    });
-
-    const twStocks = scores.filter(s => !/[a-zA-Z]/.test(s.ticker)).map(mapStock);
-    const usStocks = scores.filter(s => /[a-zA-Z]/.test(s.ticker)).map(mapStock);
+    if (!marketDataCache) {
+      return res.json({ 
+        lastUpdated: "正在初始化數據...", 
+        twStocks: [], 
+        usStocks: [],
+        taiex: { price: 0, changePercent: 0, date: "" },
+        isBackgroundSyncing: globalSyncingFlag 
+      });
+    }
 
     res.json({
-      lastUpdated: sysStatus.tw_last_sync_time || '尚未同步',
-      systemStatus: sysStatus,
-      twStocks,
-      usStocks,
-      isBackgroundSyncing: globalSyncingFlag,
-      stockPoolCount: scores.length
+      ...marketDataCache,
+      isBackgroundSyncing: globalSyncingFlag
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1620,29 +1316,31 @@ app.post("/api/market-sync/force", async (req, res) => {
   res.json({ message: "Sync started in background" });
 });
 
-// Refresh Rankings (read from DB)
+// Refresh Rankings 
 app.post("/api/market-sync/refresh", (req, res) => {
-  res.json({ message: "Rankings refreshed from database" });
+  res.json({ message: "Rankings refreshed from memory" });
 });
 
-// Get Klines from DB
+// Get Klines 
 app.get("/api/stock-klines/:ticker", async (req, res) => {
   try {
     const { ticker } = req.params;
-    const bars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(ticker) as any[];
-    if (bars.length === 0) {
-       return res.status(404).json({ error: "No historical data found in DB" });
+    if (!marketDataCache) loadCacheFromFile();
+    
+    if (!marketDataCache) {
+      return res.status(404).json({ error: "Data not available yet" });
     }
-    res.json(bars.map(b => ({
-      date: b.trade_date,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-      volume: b.volume
-    })));
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    
+    const stock = marketDataCache.twStocks.find((s: any) => s.ticker === ticker) || 
+                  marketDataCache.usStocks.find((s: any) => s.ticker === ticker);
+                  
+    if (!stock) {
+      return res.status(404).json({ error: "Stock not found" });
+    }
+    
+    res.json(stock.klines || []);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1672,12 +1370,7 @@ app.post("/api/analyze", async (req, res) => {
 });
 
 async function startServer() {
-  // Check if DB empty and trigger sync
-  const count = db.prepare('SELECT COUNT(*) as count FROM sepa_scores').get() as any;
-  if (count && count.count === 0) {
-    console.log("[Boot] DB is empty, triggering initial background sync...");
-    performMarketSync().catch(err => console.error("[Boot Sync Error]", err));
-  }
+  loadCacheFromFile();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
