@@ -69,6 +69,29 @@ const formatSyncTime = (raw: string): string => {
   return raw;
 };
 
+const getSyncStageLabel = (progress: any): string => {
+  if (!progress) return "正在初始化掃描佇列...";
+  const { stage, usCompleted, usTotal, twCompleted, twTotal, currentTicker } = progress;
+  switch (stage) {
+    case "indices":
+      return "正在獲取大盤加權指數資訊...";
+    case "universe":
+      return "正在透過 Gemini 搜尋當前熱門強勢版塊...";
+    case "scanning_us":
+      return `正在掃描美股 K 線：${currentTicker || ""} (${usCompleted}/${usTotal})`;
+    case "scanning_tw":
+      return `正在掃描台股 K 線：${currentTicker || ""} (${twCompleted}/${twTotal})`;
+    case "ranking":
+      return "正在運算 SEPA 百分比相對強度排行 (RS Rank)...";
+    case "saving":
+      return "掃描演算完成！正在彙整寫入快照...";
+    case "idle":
+      return "正在更新快取與彙整數據...";
+    default:
+      return "正在進行多維度強勢股掃描...";
+  }
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
@@ -125,6 +148,7 @@ export default function App() {
   const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<any>(null);
 
   // Filter systems
   const [twFilters, setTwFilters] = useState<FilterSettings>({
@@ -169,6 +193,7 @@ export default function App() {
           setPoolCount(DataProvider.getStockPoolCount());
           setSyncMessage(result.message || null);
           setRefreshing(result.isSyncing);
+          setSyncProgress(DataProvider.getSyncProgress());
 
           // Only set default ticker ONCE if nothing is selected
           if (!selectedTicker && !hasInitialized.current) {
@@ -196,6 +221,42 @@ export default function App() {
       if (pollInterval) clearInterval(pollInterval);
     };
   }, [weights]);
+
+  // Fast polling when scanning is in progress to show real-time progress bar/percentage smoothly
+  useEffect(() => {
+    if (!refreshing) return;
+
+    let active = true;
+    const fastPoll = async () => {
+      try {
+        const result = await DataProvider.loadFromAPI(false, weights);
+        if (active) {
+          const isSyncingNow = result.isSyncing;
+          setRefreshing(isSyncingNow);
+          setSyncProgress(DataProvider.getSyncProgress());
+          
+          if (!isSyncingNow) {
+            // Re-fetch final data and lastUpdated upon completion
+            const tw = DataProvider.getTwStocks(weights);
+            const us = DataProvider.getUsStocks(weights);
+            setTwStocks(tw);
+            setUsStocks(us);
+            setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
+            setPoolCount(DataProvider.getStockPoolCount());
+          }
+        }
+      } catch (err) {
+        console.error("Fast poll error", err);
+      }
+    };
+
+    // Poll every 1 second during active scans
+    const interval = setInterval(fastPoll, 1000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [refreshing, weights]);
 
   // Quote auto-cycler
   useEffect(() => {
@@ -226,12 +287,22 @@ export default function App() {
     setRefreshing(true);
     setError(null);
     setSyncMessage("要求已送出，正在排隊執行掃描...");
+    setSyncProgress({
+      stage: "indices",
+      usTotal: 0,
+      usCompleted: 0,
+      twTotal: 0,
+      twCompleted: 0,
+      percent: 3,
+      currentTicker: ""
+    });
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
       const result = await DataProvider.loadFromAPI(true, weights);
       if (result.success) {
         setSyncMessage(result.message || "正在掃描市場...");
         setRefreshing(result.isSyncing);
+        setSyncProgress(DataProvider.getSyncProgress());
         const tw = DataProvider.getTwStocks(weights);
         setTwStocks(tw);
         setUsStocks(DataProvider.getUsStocks(weights));
@@ -242,6 +313,7 @@ export default function App() {
       console.error("[Frontend] Force rescan failed:", e);
       setError(e.message || "市場資料同步失敗，請檢查資料來源。");
       setRefreshing(false);
+      setSyncProgress(null);
     }
   };
 
@@ -724,7 +796,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <header className="relative sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
         
         {/* Logo and tabs links */}
         <div className="flex items-center gap-4 md:gap-8">
@@ -795,8 +867,14 @@ export default function App() {
           <div className="hidden sm:block text-right">
             <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
             <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
-            {refreshing && syncMessage && (
-              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
+            {refreshing ? (
+              <span className="text-[10px] text-teal-400 font-bold animate-pulse block mt-0.5">
+                ● {getSyncStageLabel(syncProgress)}
+              </span>
+            ) : (
+              syncMessage && (
+                <span className="text-[9px] text-[#8B949E] font-medium block mt-0.5">● {syncMessage}</span>
+              )
             )}
           </div>
 
@@ -806,9 +884,17 @@ export default function App() {
             className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "掃描演算中..." : "重新掃描市場"}
+            {refreshing ? `已完成 ${syncProgress?.percent || 0}%` : "重新掃描市場"}
           </button>
         </div>
+
+        {/* Dynamic dynamic linear progress bottom bar */}
+        {refreshing && (
+          <div 
+            className="absolute bottom-0 left-0 h-[2.5px] bg-gradient-to-r from-teal-500 via-indigo-500 to-purple-500 transition-all duration-300 shadow-[0_0_8px_rgba(99,102,241,0.6)]" 
+            style={{ width: `${syncProgress?.percent || 0}%` }}
+          />
+        )}
       </header>
 
       {/* Main Full-stack Workspace Layout Grid */}
@@ -825,16 +911,16 @@ export default function App() {
                 <span className="flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" /> 背景同步中
                 </span>
-                <span>掃描中...</span>
+                <span>已完成 {syncProgress?.percent || 0}%</span>
               </div>
               <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-500 animate-[sync-progress_10s_ease-in-out_infinite]" style={{ width: '40%' }}></div>
+                <div className="h-full bg-gradient-to-r from-teal-500 via-indigo-500 to-purple-500 transition-all duration-300" style={{ width: `${syncProgress?.percent || 0}%` }}></div>
               </div>
               <p className="text-[10px] text-gray-400 font-medium leading-tight">
-                {syncMessage || "正在背景分批獲取最新數據... 獲取完成後將自動刷新。"}
+                {getSyncStageLabel(syncProgress)}
               </p>
               <p className="text-[9px] text-gray-500 italic">
-                由於交易所流量限制，完整更新約需 5~10 分鐘。
+                正在更新與執行 SEPA 模型趨勢計算，請稍候。工欲善其事，必先利其器！
               </p>
             </div>
           )}

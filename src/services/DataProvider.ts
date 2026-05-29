@@ -24,6 +24,7 @@ export class DataProvider {
   private static poolCount: number = 0;
   private static taiexVal = { price: 0, changePercent: 0, date: "" };
   private static nasdaqVal = { price: 0, changePercent: 0, date: "" };
+  private static syncProgress: any = null;
 
   public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<{ success: boolean; isSyncing: boolean; message?: string }> {
     if (customWeights) {
@@ -47,6 +48,7 @@ export class DataProvider {
         if (data.stockPoolCount !== undefined) this.poolCount = data.stockPoolCount;
         if (data.taiex) this.taiexVal = data.taiex;
         if (data.nasdaq) this.nasdaqVal = data.nasdaq;
+        this.syncProgress = data.syncProgress || null;
         this.twStocks = data.twStocks || [];
         this.usStocks = data.usStocks || [];
 
@@ -135,5 +137,9 @@ export class DataProvider {
 
   public static getNasdaq() {
     return this.nasdaqVal;
+  }
+
+  public static getSyncProgress() {
+    return this.syncProgress;
   }
 }

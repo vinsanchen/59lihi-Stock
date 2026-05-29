@@ -149,6 +149,26 @@ let stooqRateLimitUntil = 0;
 let finMindRateLimitUntil = 0;
 let globalSyncingFlag = false;
 
+interface SyncProgress {
+  stage: "idle" | "indices" | "universe" | "scanning_us" | "scanning_tw" | "ranking" | "saving";
+  usTotal: number;
+  usCompleted: number;
+  twTotal: number;
+  twCompleted: number;
+  percent: number;
+  currentTicker: string;
+}
+
+let syncProgress: SyncProgress = {
+  stage: "idle",
+  usTotal: 0,
+  usCompleted: 0,
+  twTotal: 0,
+  twCompleted: 0,
+  percent: 0,
+  currentTicker: ""
+};
+
 // ==========================================
 // SEPA Watchlist Tracker Registry
 // ==========================================
@@ -1423,6 +1443,16 @@ async function performMarketSync(): Promise<boolean> {
   if (globalSyncingFlag) return false;
   globalSyncingFlag = true;
   
+  syncProgress = {
+    stage: "indices",
+    usTotal: 0,
+    usCompleted: 0,
+    twTotal: 0,
+    twCompleted: 0,
+    percent: 3,
+    currentTicker: ""
+  };
+  
   try {
     console.log("[Market Sync] Target: Dynamically discovering today's hottest growth stocks...");
     
@@ -1430,6 +1460,9 @@ async function performMarketSync(): Promise<boolean> {
     const indexData = await fetchIndexDataBulk();
     const twseStockListFull = await fetchTWSEList();
     
+    syncProgress.stage = "universe";
+    syncProgress.percent = 8;
+
     // Discover universe dynamically via Gemini or high-quality fallback
     const dynamicUniverse = await discoverTrendingUniverseViaGemini();
     const twTrending = dynamicUniverse.filter(s => s.country === "TW");
@@ -1445,7 +1478,16 @@ async function performMarketSync(): Promise<boolean> {
 
     // 1. Fetch US Stock Prices & Calculate Raw Relative Strength
     console.log(`[Market Sync] Scanning ${usTrending.length} US momentum candidates...`);
-    for (const item of usTrending) {
+    syncProgress.stage = "scanning_us";
+    syncProgress.usTotal = usTrending.length;
+    syncProgress.usCompleted = 0;
+
+    for (let idx = 0; idx < usTrending.length; idx++) {
+      const item = usTrending[idx];
+      syncProgress.currentTicker = item.ticker;
+      syncProgress.usCompleted = idx;
+      syncProgress.percent = Math.round(10 + (idx / usTrending.length) * 40);
+
       try {
         const { klines } = await fetchStockKLines(item.ticker, false, item.name);
         await new Promise(r => setTimeout(r, 600)); // Standard sandboxed wait
@@ -1463,10 +1505,20 @@ async function performMarketSync(): Promise<boolean> {
         console.warn(`[Market Sync] Failed to load US ${item.ticker}:`, err.message || err);
       }
     }
+    syncProgress.usCompleted = usTrending.length;
 
     // 2. Fetch TW Stock Prices & Calculate Raw Relative Strength
     console.log(`[Market Sync] Scanning ${twTrending.length} TW momentum candidates...`);
-    for (const item of twTrending) {
+    syncProgress.stage = "scanning_tw";
+    syncProgress.twTotal = twTrending.length;
+    syncProgress.twCompleted = 0;
+
+    for (let idx = 0; idx < twTrending.length; idx++) {
+      const item = twTrending[idx];
+      syncProgress.currentTicker = item.ticker;
+      syncProgress.twCompleted = idx;
+      syncProgress.percent = Math.round(50 + (idx / twTrending.length) * 40);
+
       try {
         const { klines } = await fetchStockKLines(item.ticker, true, item.name);
         await new Promise(r => setTimeout(r, 600));
@@ -1484,8 +1536,13 @@ async function performMarketSync(): Promise<boolean> {
         console.warn(`[Market Sync] Failed to load TW ${item.ticker}:`, err.message || err);
       }
     }
+    syncProgress.twCompleted = twTrending.length;
 
     // 3. Compute Real-time Percentile Rankings for US
+    syncProgress.stage = "ranking";
+    syncProgress.percent = 92;
+    syncProgress.currentTicker = "";
+
     const sortedUsTickers = Object.keys(usRawRSMap).sort((a, b) => usRawRSMap[a] - usRawRSMap[b]);
     const usRSRankingMap: Record<string, number> = {};
     const usCount = sortedUsTickers.length;
@@ -1608,6 +1665,9 @@ async function performMarketSync(): Promise<boolean> {
     }
 
     // 7. Write to cache & disk
+    syncProgress.stage = "saving";
+    syncProgress.percent = 98;
+
     marketDataCache = {
       lastUpdated: new Date().toISOString(),
       taiex: indexData.taiex,
@@ -1620,11 +1680,17 @@ async function performMarketSync(): Promise<boolean> {
     saveWatchlistTrackerToDisk();
     saveCacheToFile();
     globalSyncingFlag = false;
+    
+    syncProgress.stage = "idle";
+    syncProgress.percent = 100;
+
     console.log(`[Market Sync Success] Completed. TW analytical count: ${finalTwList.length}, US count: ${finalUsList.length}`);
     return true;
   } catch (err) {
     console.error("Sync failed", err);
     globalSyncingFlag = false;
+    syncProgress.stage = "idle";
+    syncProgress.percent = 0;
     return false;
   }
 }
@@ -1642,13 +1708,15 @@ app.get("/api/market-data", async (req, res) => {
         twStocks: [], 
         usStocks: [],
         taiex: { price: 0, changePercent: 0, date: "" },
-        isBackgroundSyncing: globalSyncingFlag 
+        isBackgroundSyncing: globalSyncingFlag,
+        syncProgress: syncProgress
       });
     }
 
     res.json({
       ...marketDataCache,
-      isBackgroundSyncing: globalSyncingFlag
+      isBackgroundSyncing: globalSyncingFlag,
+      syncProgress: syncProgress
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
