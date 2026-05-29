@@ -1388,7 +1388,7 @@ function saveStockDataToDb(analyzed: any, klines: any[], freshness: string, pric
 async function performMarketSync(): Promise<boolean> {
   if (globalSyncingFlag) return false;
   globalSyncingFlag = true;
-  updateStatus('sync_progress', '0%');
+  updateStatus('sync_progress', '1%');
   
   try {
     console.log("[Market Sync] Starting DB-driven incremental sync...");
@@ -1403,20 +1403,33 @@ async function performMarketSync(): Promise<boolean> {
     
     // 3. Markets
     const usUniverse = [
-      { ticker: "NVDA", name: "Nvidia" }, { ticker: "TSLA", name: "Tesla" }, { ticker: "AAPL", name: "Apple" },
-      { ticker: "MSFT", name: "Microsoft" }, { ticker: "AMD", name: "AMD" }, { ticker: "AMZN", name: "Amazon" },
-      { ticker: "GOOGL", name: "Google" }, { ticker: "META", name: "Meta" }, { ticker: "AVGO", name: "Broadcom" },
-      { ticker: "SMCI", name: "SuperMicro" }, { ticker: "ARM", name: "ARM Holdings" }, { ticker: "MU", name: "Micron" },
-      { ticker: "ASML", name: "ASML" }, { ticker: "MSTR", name: "MicroStrategy" }, { ticker: "COIN", name: "Coinbase" },
-      { ticker: "PLTR", name: "Palantir" }, { ticker: "NFLX", name: "Netflix" }, { ticker: "ORCL", name: "Oracle" },
-      { ticker: "ADBE", name: "Adobe" }, { ticker: "CRM", name: "Salesforce" }
+      { ticker: "NVDA", name: "Nvidia", industry: "AI Chip" }, 
+      { ticker: "TSLA", name: "Tesla", industry: "EV" }, 
+      { ticker: "AAPL", name: "Apple", industry: "Tech" },
+      { ticker: "MSFT", name: "Microsoft", industry: "Software" }, 
+      { ticker: "AMD", name: "AMD", industry: "Semiconductor" }, 
+      { ticker: "AMZN", name: "Amazon", industry: "Retail" },
+      { ticker: "GOOGL", name: "Google", industry: "Software" }, 
+      { ticker: "META", name: "Meta", industry: "Social" }, 
+      { ticker: "AVGO", name: "Broadcom", industry: "Semiconductor" },
+      { ticker: "SMCI", name: "SuperMicro", industry: "Server" }, 
+      { ticker: "ARM", name: "ARM Holdings", industry: "Semiconductor" }, 
+      { ticker: "MU", name: "Micron", industry: "Memory" },
+      { ticker: "ASML", name: "ASML", industry: "Semiconductor" }, 
+      { ticker: "MSTR", name: "MicroStrategy", industry: "Tech" }, 
+      { ticker: "COIN", name: "Coinbase", industry: "Fintech" },
+      { ticker: "PLTR", name: "Palantir", industry: "Software" }, 
+      { ticker: "NFLX", name: "Netflix", industry: "Entertainment" }, 
+      { ticker: "ORCL", name: "Oracle", industry: "Software" },
+      { ticker: "ADBE", name: "Adobe", industry: "Software" }, 
+      { ticker: "CRM", name: "Salesforce", industry: "Software" }
     ];
     
     twseStockList = await fetchTWSEList();
     const rsScoreMap: Record<string, number> = {};
     const stockBars: Record<string, any[]> = {};
 
-    // US Stocks
+    // --- US Stocks Sync ---
     console.log("[Market Sync] Syncing US Universe...");
     for (const item of usUniverse) {
       try {
@@ -1424,15 +1437,15 @@ async function performMarketSync(): Promise<boolean> {
         let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
         
         const lastDate = finalKlines.length > 0 ? finalKlines[finalKlines.length - 1].date : '1970-01-01';
-        const today = new Date().toISOString().split('T')[0];
+        const todayStr = new Date().toISOString().split('T')[0];
 
-        if (lastDate < today) {
+        if (lastDate < todayStr) {
           const { klines } = await fetchStockKLines(item.ticker, false, item.name);
-          if (klines.length > 0) finalKlines = klines;
-          await new Promise(r => setTimeout(r, 1000));
+          if (klines && klines.length > 0) finalKlines = klines;
+          await new Promise(r => setTimeout(r, 1200));
         }
 
-        if (finalKlines.length >= 160) {
+        if (finalKlines.length >= 100) {
           const last = finalKlines[finalKlines.length - 1].close;
           const getReturn = (days: number) => {
             if (finalKlines.length <= days) return 0;
@@ -1447,11 +1460,18 @@ async function performMarketSync(): Promise<boolean> {
       }
     }
 
-    // TW Stocks
+    // --- TW Stocks Sync ---
     console.log("[Market Sync] Syncing TWSE Stocks...");
-    const twScanList = twseStockList.slice(0, 1100);
-    for (let i = 0; i < twScanList.length; i++) {
-      const item = twScanList[i];
+    const pool = twseStockList.length > 0 ? twseStockList : [{ticker: "2330", name: "台積電", industry: "半導體"}];
+    
+    // Priority tickers to get on screen fast
+    const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669"];
+    const priorityPool = pool.filter(s => priorityTickers.includes(s.ticker));
+    const remainingPool = pool.filter(s => !priorityTickers.includes(s.ticker));
+    const combinedPool = [...priorityPool, ...remainingPool];
+
+    for (let i = 0; i < combinedPool.length; i++) {
+      const item = combinedPool[i];
       try {
         const existingBars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(item.ticker) as any[];
         let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
@@ -1461,20 +1481,28 @@ async function performMarketSync(): Promise<boolean> {
 
         if (lastDate < todayStr) {
           const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-          if (klines.length > 0) {
+          if (klines && klines.length > 0) {
             finalKlines = klines;
           } else {
+            // Fallback to TWSE OpenAPI
             const snap = twseSnapshots[item.ticker];
             if (snap && snap.close > 0 && finalKlines.length > 0) {
-              finalKlines.push({ date: todayStr, close: snap.close, volume: snap.volume, high: snap.close, low: snap.close, open: snap.close });
+              finalKlines.push({ 
+                date: todayStr, 
+                close: snap.close, 
+                volume: snap.volume, 
+                high: snap.close, 
+                low: snap.close, 
+                open: snap.close 
+              });
             }
           }
           if (finalKlines.length > existingBars.length) {
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 800));
           }
         }
 
-        if (finalKlines.length >= 160) {
+        if (finalKlines.length >= 150) {
           const last = finalKlines[finalKlines.length - 1].close;
           const getReturn = (days: number) => {
             if (finalKlines.length <= days) return 0;
@@ -1486,7 +1514,7 @@ async function performMarketSync(): Promise<boolean> {
         }
 
         if (i % 20 === 0) {
-          const progress = Math.round((i / twScanList.length) * 100);
+          const progress = Math.round((i / pool.length) * 100);
           updateStatus('sync_progress', `${progress}%`);
           updateStatus('stock_count', String(Object.keys(rsScoreMap).length));
         }
@@ -1495,30 +1523,38 @@ async function performMarketSync(): Promise<boolean> {
       }
     }
 
-    // RS Ranking and Final Pass
+    // --- Final RS Ranking and DB Save ---
     const sortedTickers = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+    
     for (const ticker of sortedTickers) {
-      const bars = stockBars[ticker];
-      const rankIndex = sortedTickers.indexOf(ticker);
-      const rsRank = Math.floor((rankIndex / Math.max(1, sortedTickers.length)) * 99) + 1;
-      
-      const isTW = !/[a-zA-Z]/.test(ticker);
-      const item = isTW ? twseStockList.find(s => s.ticker === ticker) : usUniverse.find(s => s.ticker === ticker);
-      if (!item || !bars) continue;
+      try {
+        const bars = stockBars[ticker];
+        const rankIndex = sortedTickers.indexOf(ticker);
+        const rsRank = Math.floor((rankIndex / Math.max(1, sortedTickers.length)) * 99) + 1;
+        
+        const isTW = !/[a-zA-Z]/.test(ticker);
+        const item = isTW ? pool.find(s => s.ticker === ticker) : usUniverse.find(s => s.ticker === ticker);
+        if (!item || !bars) continue;
 
-      const analyzed = computeStockAnalysis(ticker, item.name, isTW ? "上市" : "NASDAQ", isTW ? "TW" : "US", bars, rsRank, (item as any).industry);
-      if (analyzed) {
-         const tracker = watchlistTrackerRegistry[ticker] || { ticker, consecutiveDays: 0 };
-         if (analyzed.trendTemplate.passed) tracker.consecutiveDays++;
-         else tracker.consecutiveDays = 0;
-         watchlistTrackerRegistry[ticker] = tracker;
-         const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
-         analyzed.watchlistCategory = cat;
-         analyzed.watchlistCategoryEn = catEn;
-         saveStockDataToDb(analyzed, bars, 'fresh', 'Yahoo');
+        const analyzed = computeStockAnalysis(ticker, item.name, isTW ? "上市" : "NASDAQ", isTW ? "TW" : "US", bars, rsRank, (item as any).industry);
+        if (analyzed) {
+           const tracker = watchlistTrackerRegistry[ticker] || { ticker, consecutiveDays: 0 };
+           if (analyzed.trendTemplate.passed) tracker.consecutiveDays++;
+           else tracker.consecutiveDays = 0;
+           watchlistTrackerRegistry[ticker] = tracker;
+
+           const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
+           analyzed.watchlistCategory = cat;
+           analyzed.watchlistCategoryEn = catEn;
+
+           saveStockDataToDb(analyzed, bars, 'fresh', 'Yahoo');
+        }
+      } catch (saveErr) {
+        console.error(`[Final Processing Error] ${ticker}:`, saveErr);
       }
     }
 
+    console.log(`[Market Sync Progress] ${i}/${combinedPool.length} stocks processed. Valid: ${Object.keys(rsScoreMap).length}`);
     updateStatus('tw_last_sync_time', new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }));
     updateStatus('tw_data_status', '🟢 正常');
     updateStatus('sync_progress', '100%');
@@ -1528,6 +1564,7 @@ async function performMarketSync(): Promise<boolean> {
   } catch (err) {
     console.error("[Market Sync Error]", err);
     updateStatus('tw_data_status', '🔴 失敗');
+    updateStatus('sync_progress', 'error');
     globalSyncingFlag = false;
     return false;
   }
@@ -1635,6 +1672,13 @@ app.post("/api/analyze", async (req, res) => {
 });
 
 async function startServer() {
+  // Check if DB empty and trigger sync
+  const count = db.prepare('SELECT COUNT(*) as count FROM sepa_scores').get() as any;
+  if (count && count.count === 0) {
+    console.log("[Boot] DB is empty, triggering initial background sync...");
+    performMarketSync().catch(err => console.error("[Boot Sync Error]", err));
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
