@@ -58,6 +58,17 @@ const TOP_INDUSTRIES = [
   { name: "散熱", avgSepa: 0, breakoutRate: 0, leaders: [] }
 ];
 
+const formatSyncTime = (raw: string): string => {
+  if (!raw) return "";
+  try {
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleString(undefined, { hourCycle: 'h23' });
+    }
+  } catch {}
+  return raw;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
@@ -154,7 +165,7 @@ export default function App() {
           const us = DataProvider.getUsStocks(weights);
           setTwStocks(tw);
           setUsStocks(us);
-          setLastUpdated(DataProvider.getLastUpdated());
+          setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
           setPoolCount(DataProvider.getStockPoolCount());
           setSyncMessage(result.message || null);
           setRefreshing(result.isSyncing);
@@ -224,7 +235,7 @@ export default function App() {
         const tw = DataProvider.getTwStocks(weights);
         setTwStocks(tw);
         setUsStocks(DataProvider.getUsStocks(weights));
-        setLastUpdated(DataProvider.getLastUpdated());
+        setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
         setPoolCount(DataProvider.getStockPoolCount());
       }
     } catch (e: any) {
