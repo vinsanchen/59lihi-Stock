@@ -145,23 +145,6 @@ export default function SepaScores({ stock, customWeights }: SepaScoresProps) {
           })}
         </div>
       </div>
-
-      {/* SEPA Hard Constraints Verification banner */}
-      <div className="bg-[#1f2937]/15 border border-indigo-500/20 rounded-xl p-3.5 space-y-2 text-[11px] text-gray-400">
-        <div className="font-extrabold text-indigo-300 flex items-center gap-1.5 uppercase tracking-widest text-[9.5px]">
-          🛡️ Mark Minervini SEPA® 綜合演算核心機制
-        </div>
-        <ul className="list-disc list-inside space-y-1.5 pl-1 text-[10.5px] leading-relaxed">
-          <li>
-            <strong className="text-gray-200">美股與台股分開百分位數 (1-99 Percentile)</strong>：
-            台美雙市獨立計算。每檔個股的 RS 相對強度是在其所屬市場 (US 或 TW) 中，針對所有活躍成分股進行價格強度排序後得出的真實百分位落點。
-          </li>
-          <li>
-            <strong className="text-gray-200">非 RS 獨大，尊重多維度限制</strong>：
-            RS Rank 僅佔綜合分數中的 <strong className="text-indigo-400 font-bold">20% 權重</strong>。高 RS 之落後股若未通過趨勢模板 (Trend Template)、不具備 VCP 收縮、或高檔過度延伸 (風險報酬比不佳)，將會因系統懲罰機制而無法進入 Top 20，甚至自動被分類至「不符合」名單。
-          </li>
-        </ul>
-      </div>
     </div>
   );
 }

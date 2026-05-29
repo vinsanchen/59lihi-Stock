@@ -58,40 +58,6 @@ const TOP_INDUSTRIES = [
   { name: "散熱", avgSepa: 0, breakoutRate: 0, leaders: [] }
 ];
 
-const formatSyncTime = (raw: string): string => {
-  if (!raw) return "";
-  try {
-    const d = new Date(raw);
-    if (!isNaN(d.getTime())) {
-      return d.toLocaleString(undefined, { hourCycle: 'h23' });
-    }
-  } catch {}
-  return raw;
-};
-
-const getSyncStageLabel = (progress: any): string => {
-  if (!progress) return "正在初始化掃描佇列...";
-  const { stage, usCompleted, usTotal, twCompleted, twTotal, currentTicker } = progress;
-  switch (stage) {
-    case "indices":
-      return "正在獲取大盤加權指數資訊...";
-    case "universe":
-      return "正在透過 Gemini 搜尋當前熱門強勢版塊...";
-    case "scanning_us":
-      return `正在掃描美股 K 線：${currentTicker || ""} (${usCompleted}/${usTotal})`;
-    case "scanning_tw":
-      return `正在掃描台股 K 線：${currentTicker || ""} (${twCompleted}/${twTotal})`;
-    case "ranking":
-      return "正在運算 SEPA 百分比相對強度排行 (RS Rank)...";
-    case "saving":
-      return "掃描演算完成！正在彙整寫入快照...";
-    case "idle":
-      return "正在更新快取與彙整數據...";
-    default:
-      return "正在進行多維度強勢股掃描...";
-  }
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings">("watchlist");
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
@@ -148,7 +114,6 @@ export default function App() {
   const [poolCount, setPoolCount] = useState<number>(0);
   const [refreshing, setRefreshing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [syncProgress, setSyncProgress] = useState<any>(null);
 
   // Filter systems
   const [twFilters, setTwFilters] = useState<FilterSettings>({
@@ -176,7 +141,7 @@ export default function App() {
   const [aiReportCache, setAiReportCache] = useState<{ [ticker: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
 
-  // Unified single polling and background sync updater
+  // Initialize stocks lists using live API
   useEffect(() => {
     let active = true;
     let pollInterval: any = null;
@@ -189,11 +154,10 @@ export default function App() {
           const us = DataProvider.getUsStocks(weights);
           setTwStocks(tw);
           setUsStocks(us);
-          setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
+          setLastUpdated(DataProvider.getLastUpdated());
           setPoolCount(DataProvider.getStockPoolCount());
           setSyncMessage(result.message || null);
           setRefreshing(result.isSyncing);
-          setSyncProgress(DataProvider.getSyncProgress());
 
           // Only set default ticker ONCE if nothing is selected
           if (!selectedTicker && !hasInitialized.current) {
@@ -206,26 +170,21 @@ export default function App() {
           setError(null);
         }
       } catch (err: any) {
-        console.error("[Polling Error]", err);
         if (active) {
           setError(err.message || "市場資料同步失敗，請檢查資料來源。");
           setRefreshing(false);
-          setSyncProgress(null);
         }
       }
     };
 
     loadData();
-    
-    // Dynamic polling interval: 3 seconds during active scanning, 15 seconds when idle
-    const intervalMs = refreshing ? 3000 : 15000;
-    pollInterval = setInterval(() => loadData(false), intervalMs);
+    pollInterval = setInterval(() => loadData(false), 5000);
 
     return () => {
       active = false;
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [weights, refreshing]);
+  }, [weights]);
 
   // Quote auto-cycler
   useEffect(() => {
@@ -256,33 +215,22 @@ export default function App() {
     setRefreshing(true);
     setError(null);
     setSyncMessage("要求已送出，正在排隊執行掃描...");
-    setSyncProgress({
-      stage: "indices",
-      usTotal: 0,
-      usCompleted: 0,
-      twTotal: 0,
-      twCompleted: 0,
-      percent: 3,
-      currentTicker: ""
-    });
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
       const result = await DataProvider.loadFromAPI(true, weights);
       if (result.success) {
         setSyncMessage(result.message || "正在掃描市場...");
         setRefreshing(result.isSyncing);
-        setSyncProgress(DataProvider.getSyncProgress());
         const tw = DataProvider.getTwStocks(weights);
         setTwStocks(tw);
         setUsStocks(DataProvider.getUsStocks(weights));
-        setLastUpdated(formatSyncTime(DataProvider.getLastUpdated()));
+        setLastUpdated(DataProvider.getLastUpdated());
         setPoolCount(DataProvider.getStockPoolCount());
       }
     } catch (e: any) {
       console.error("[Frontend] Force rescan failed:", e);
       setError(e.message || "市場資料同步失敗，請檢查資料來源。");
       setRefreshing(false);
-      setSyncProgress(null);
     }
   };
 
@@ -501,11 +449,10 @@ export default function App() {
       const sector = filters.marketFilter;
       if (["電子類", "金融類", "傳產類"].includes(sector)) {
         result = result.filter((s) => s.mainIndustry === sector);
-      } else if (["TW", "US", "NYSE", "NASDAQ", "OTC", "上市", "上櫃"].includes(sector)) {
-        result = result.filter((s) => s.marketType === sector);
+      } else if (["半導體", "AI 伺服器", "PCB / ABF", "散熱", "電源 / 功率半導體"].includes(sector)) {
+        result = result.filter((s) => s.subIndustry === sector);
       } else {
-        // Automatically check if subIndustry or mainIndustry matches this dynamic category/theme!
-        result = result.filter((s) => s.subIndustry === sector || s.mainIndustry === sector);
+        result = result.filter((s) => s.marketType === sector);
       }
     }
 
@@ -580,35 +527,13 @@ export default function App() {
 
   // 今日最強產業 (Today's Strongest Industries) calculations
   const topSegments = useMemo(() => {
-    // Collect all unique subIndustries from twStocks
-    const uniqueSubIndustries = Array.from(
-      new Set(
-        twStocks
-          .map((s) => s.subIndustry)
-          .filter((sub): sub is string => !!sub && sub !== "其他" && sub !== "None")
-      )
-    );
-
-    // Combine any newly discovered categories with classic fallbacks as base seeds
-    const combinedIndustries = Array.from(new Set([
-      ...uniqueSubIndustries,
-      "AI 伺服器",
-      "PCB / ABF",
-      "電源 / 功率半導體",
-      "散熱",
-      "半導體"
-    ]));
-
-    const list = combinedIndustries.map((ind) => {
-      let label = ind;
-      let description = "主流主題板塊";
-      if (ind === "AI 伺服器") { label = "AI Server"; description = "組裝/伺服器板塊"; }
-      else if (ind === "PCB / ABF") { label = "PCB / ABF"; description = "載板與高頻板"; }
-      else if (ind === "電源 / 功率半導體") { label = "Power / BBU"; description = "電源與功率半導體"; }
-      else if (ind === "散熱") { label = "Thermal Tech"; description = "液冷與散熱技術"; }
-      else if (ind === "半導體") { label = "Semiconductors"; description = "先進封裝與代工板塊"; }
-      return { name: ind, label, description };
-    });
+    const list = [
+      { name: "AI 伺服器", label: "AI Server", description: "組裝/伺服器板塊" },
+      { name: "PCB / ABF", label: "PCB / ABF", description: "載板與高頻板" },
+      { name: "電源 / 功率半導體", label: "Power / BBU", description: "電源供應、BBU模組" },
+      { name: "散熱", label: "Thermal Tech", description: "液冷 & 水冷散熱" },
+      { name: "半導體", label: "CoWoS / Foundry", description: "先進封裝與晶圓代工" }
+    ];
 
     const mapped = list.map((industry) => {
       // Prioritize subIndustry, fallback to mainIndustry containing the name
@@ -620,7 +545,7 @@ export default function App() {
           breakoutCount: 0,
           avgChange: 0,
           avgVolRatio: 0,
-          score: -999 // Put empty fallbacks at the bottom immediately
+          score: 0
         };
       }
 
@@ -652,79 +577,6 @@ export default function App() {
     // Sort descending by calculated strength score
     return mapped.sort((a, b) => b.score - a.score);
   }, [twStocks]);
-
-  // 今日最強產業 (Today's Strongest Industries) calculations for US stocks
-  const topUsSegments = useMemo(() => {
-    // Collect all unique subIndustries from usStocks
-    const uniqueSubIndustries = Array.from(
-      new Set(
-        usStocks
-          .map((s) => s.subIndustry)
-          .filter((sub): sub is string => !!sub && sub !== "其他" && sub !== "None" && sub !== "Tech" && sub !== "Consumer" && sub !== "Energy" && sub !== "Biotech" && sub !== "Financials")
-      )
-    );
-
-    // Combine with US classic seed themes
-    const combinedIndustries = Array.from(new Set([
-      ...uniqueSubIndustries,
-      "AI GPU",
-      "Enterprise AI Solutions",
-      "Clean Nuclear Power",
-      "Next-Gen XDR Cyber Defense",
-      "GLP-1 Weight-Loss Solutions"
-    ]));
-
-    const list = combinedIndustries.map((ind) => {
-      let label = ind;
-      let description = "Growth Sector";
-      if (ind === "AI GPU") { description = "Accelerated Compute Chips"; }
-      else if (ind === "Enterprise AI Solutions") { description = "Hyperscale AI Enablers"; }
-      else if (ind === "Clean Nuclear Power") { description = "Carbon-Free AI Power"; }
-      else if (ind === "Next-Gen XDR Cyber Defense") { description = "Endpoint Cybersecurity Platforms"; }
-      else if (ind === "GLP-1 Weight-Loss Solutions") { description = "Biotech Obesity Therapeutics"; }
-      return { name: ind, label, description };
-    });
-
-    const mapped = list.map((industry) => {
-      const stocks = usStocks.filter((s) => s.subIndustry === industry.name || s.mainIndustry?.includes(industry.name));
-      if (stocks.length === 0) {
-        return {
-          ...industry,
-          avgSepa: 0,
-          breakoutCount: 0,
-          avgChange: 0,
-          avgVolRatio: 0,
-          score: -999
-        };
-      }
-
-      // 1. Avg SEPA
-      const avgSepa = stocks.reduce((acc, s) => acc + (s.sepaScore?.total || 0), 0) / stocks.length;
-      
-      // 2. Breakouts (passed trend template OR status is "已突破" / "接近買點")
-      const breakoutCount = stocks.filter((s) => s.status === "已突破" || s.status === "接近買點" || s.trendTemplate?.passed).length;
-      
-      // 3. Price change strength
-      const avgChange = stocks.reduce((acc, s) => acc + (s.changePercent || 0), 0) / stocks.length;
-      
-      // 4. Volume strength
-      const avgVolRatio = stocks.reduce((acc, s) => acc + ((s.volume / (s.avgVolume20 || 1)) || 0), 0) / stocks.length;
-
-      // Overall composite score formula
-      const score = Math.round((avgSepa * 0.45) + (breakoutCount * 12) + (avgChange * 9) + (avgVolRatio * 14));
-
-      return {
-        ...industry,
-        avgSepa: Math.round(avgSepa * 10) / 10,
-        breakoutCount,
-        avgChange: Math.round(avgChange * 100) / 100,
-        avgVolRatio: Math.round(avgVolRatio * 10) / 10,
-        score
-      };
-    });
-
-    return mapped.sort((a, b) => b.score - a.score);
-  }, [usStocks]);
 
   // Handle Sort header trigger
   const handleThSort = (tab: "tw" | "us", field: keyof StockAnalysis | "sepaScoreTotal") => {
@@ -765,7 +617,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
-      <header className="relative sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
         
         {/* Logo and tabs links */}
         <div className="flex items-center gap-4 md:gap-8">
@@ -836,14 +688,8 @@ export default function App() {
           <div className="hidden sm:block text-right">
             <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
             <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
-            {refreshing ? (
-              <span className="text-[10px] text-teal-400 font-bold animate-pulse block mt-0.5">
-                ● {getSyncStageLabel(syncProgress)}
-              </span>
-            ) : (
-              syncMessage && (
-                <span className="text-[9px] text-[#8B949E] font-medium block mt-0.5">● {syncMessage}</span>
-              )
+            {refreshing && syncMessage && (
+              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
             )}
           </div>
 
@@ -853,17 +699,9 @@ export default function App() {
             className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? `已完成 ${syncProgress?.percent || 0}%` : "重新掃描市場"}
+            {refreshing ? "掃描演算中..." : "重新掃描市場"}
           </button>
         </div>
-
-        {/* Dynamic dynamic linear progress bottom bar */}
-        {refreshing && (
-          <div 
-            className="absolute bottom-0 left-0 h-[2.5px] bg-gradient-to-r from-teal-500 via-indigo-500 to-purple-500 transition-all duration-300 shadow-[0_0_8px_rgba(99,102,241,0.6)]" 
-            style={{ width: `${syncProgress?.percent || 0}%` }}
-          />
-        )}
       </header>
 
       {/* Main Full-stack Workspace Layout Grid */}
@@ -880,16 +718,16 @@ export default function App() {
                 <span className="flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" /> 背景同步中
                 </span>
-                <span>已完成 {syncProgress?.percent || 0}%</span>
+                <span>掃描中...</span>
               </div>
               <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-teal-500 via-indigo-500 to-purple-500 transition-all duration-300" style={{ width: `${syncProgress?.percent || 0}%` }}></div>
+                <div className="h-full bg-indigo-500 animate-[sync-progress_10s_ease-in-out_infinite]" style={{ width: '40%' }}></div>
               </div>
               <p className="text-[10px] text-gray-400 font-medium leading-tight">
-                {getSyncStageLabel(syncProgress)}
+                {syncMessage || "正在背景分批獲取最新數據... 獲取完成後將自動刷新。"}
               </p>
               <p className="text-[9px] text-gray-500 italic">
-                正在更新與執行 SEPA 模型趨勢計算，請稍候。工欲善其事，必先利其器！
+                由於交易所流量限制，完整更新約需 5~10 分鐘。
               </p>
             </div>
           )}
@@ -1519,76 +1357,6 @@ export default function App() {
                 <div className="bg-[#010409] px-4 py-2 border-t border-[#30363D] flex justify-between items-center text-[10px] text-gray-500 font-mono">
                   <span>* Notice: US market calculations reflect NASDAQ/NYSE delayed data arrays</span>
                   <span>Ranked top {filteredUsStocks.length} compliant tickers</span>
-                </div>
-              </div>
-
-              {/* 今日最強產業 Top 5 Dashboard (US) */}
-              <div className="space-y-3 mt-6 bg-[#161B22]/40 p-5 rounded-2xl border border-[#30363D]/60 shadow-sm animate-fade-in">
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
-                    <Flame className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                    今日最強產業 Top 5 美股主流熱門（點擊過濾 SEPA 名單）
-                  </h3>
-                  <span className="text-[10px] text-gray-500 italic">依 SEPA 均值、突破數、今日強度及量能強度權重計分</span>
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  {topUsSegments.slice(0, 5).map((ind, idx) => {
-                    const isSelect = usFilters.marketFilter === ind.name;
-                    const isChangePos = ind.avgChange >= 0;
-                    return (
-                      <button
-                        key={ind.name}
-                        onClick={() => {
-                          setUsFilters((prev) => ({
-                            ...prev,
-                            marketFilter: isSelect ? "ALL" : ind.name
-                          }));
-                        }}
-                        className={`text-left p-3.5 rounded-xl border transition-all relative overflow-hidden select-none cursor-pointer flex flex-col justify-between h-[115px] ${
-                          isSelect
-                            ? "bg-[#1f2937]/35 border-indigo-500/80 shadow-[0_0_15px_rgba(99,102,241,0.15)]"
-                            : "bg-[#0d1117] hover:bg-[#161B22] border-[#30363D]/70 hover:border-slate-600"
-                        }`}
-                      >
-                        {/* Decorative Rank corner index */}
-                        <span className="absolute right-2 top-1.5 font-mono text-xs font-black text-indigo-500/40 select-none">
-                          #{idx + 1}
-                        </span>
-                        
-                        <div>
-                          <div className="font-bold text-[12px] text-white leading-tight pr-4">{ind.name}</div>
-                          <div className="text-[8.5px] text-gray-500 font-mono tracking-wider italic leading-none mt-0.5">{ind.label}</div>
-                        </div>
-
-                        <div className="mt-auto space-y-0.5 w-full">
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-400 text-[8.5px] font-medium uppercase tracking-tight">SEPA 均分</span>
-                            <span className="font-bold font-mono text-emerald-400 text-[11px]">{ind.avgSepa}</span>
-                          </div>
-                          
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="text-gray-400 text-[8.5px] font-medium uppercase tracking-tight">突破家數</span>
-                            <span className="font-sans font-extrabold text-amber-500 text-[10px]">
-                              🔥 {ind.breakoutCount}
-                            </span>
-                          </div>
-
-                          <div className="flex justify-between items-center text-[9px] font-mono pt-1.5 mt-1 border-t border-slate-800/60 leading-none">
-                            <span className={isChangePos ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
-                              {isChangePos ? "+" : ""}{ind.avgChange}%
-                            </span>
-                            <span className="text-gray-500 text-[8px] font-bold">x{ind.avgVolRatio} VOL</span>
-                          </div>
-                        </div>
-                        
-                        {/* Selected background indicator */}
-                        {isSelect && (
-                          <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-500" />
-                        )}
-                      </button>
-                    );
-                  })}
                 </div>
               </div>
 
