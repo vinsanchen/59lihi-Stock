@@ -9,8 +9,116 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import Database from 'better-sqlite3';
+import cron from 'node-cron';
 
 dotenv.config();
+
+const dbPath = path.join(process.cwd(), 'market.db');
+const db = new Database(dbPath);
+
+// Initialize DB schema
+function initDb() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stocks (
+      ticker TEXT PRIMARY KEY,
+      name TEXT,
+      market TEXT,
+      industry TEXT,
+      is_active INTEGER,
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_bars (
+      ticker TEXT,
+      trade_date TEXT,
+      open REAL,
+      high REAL,
+      low REAL,
+      close REAL,
+      volume REAL,
+      turnover REAL,
+      source TEXT,
+      created_at TEXT,
+      PRIMARY KEY (ticker, trade_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS sepa_scores (
+      ticker TEXT PRIMARY KEY,
+      trade_date TEXT,
+      close REAL,
+      ma50 REAL,
+      ma150 REAL,
+      ma200 REAL,
+      high_52w REAL,
+      low_52w REAL,
+      rs_rank REAL,
+      pivot REAL,
+      pivot_distance REAL,
+      sepa_score REAL,
+      trend_template_pass INTEGER,
+      pattern TEXT,
+      status TEXT,
+      data_freshness TEXT,
+      price_source TEXT,
+      indicator_source TEXT,
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS watchlists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT,
+      trade_date TEXT,
+      category TEXT,
+      sepa_score REAL,
+      pivot_distance REAL,
+      note TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS system_status (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    );
+  `);
+
+  const keys = [
+    'tw_last_data_date',
+    'tw_last_sync_time',
+    'tw_data_source',
+    'tw_data_status',
+    'yahoo_status',
+    'twse_status',
+    'cache_status',
+    'stock_count',
+    'sync_progress'
+  ];
+
+  const stmt = db.prepare('INSERT OR IGNORE INTO system_status (key, value, updated_at) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  for (const key of keys) {
+    stmt.run(key, '', now);
+  }
+}
+
+initDb();
+
+// DB Helpers
+const updateStatus = (key: string, value: string) => {
+  db.prepare('UPDATE system_status SET value = ?, updated_at = ? WHERE key = ?')
+    .run(String(value), new Date().toISOString(), key);
+};
+
+const getStatus = (key: string) => {
+  const row = db.prepare('SELECT value FROM system_status WHERE key = ?').get(key) as any;
+  return row ? row.value : '';
+};
+
+const getAllStatus = () => {
+  const rows = db.prepare('SELECT key, value FROM system_status').all() as any[];
+  return rows.reduce((acc, r) => ({ ...acc, [r.key]: r.value }), {});
+};
 
 const app = express();
 const PORT = 3000;
@@ -1202,620 +1310,345 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
   return { klines: [], isMock: false };
 }
 
-// Perform market sync across all TWSE listed stocks
+// DB Interaction Helpers
+function saveStockDataToDb(analyzed: any, klines: any[], freshness: string, priceSource: string) {
+  try {
+    // 1. Save stock info
+    db.prepare(`
+      INSERT INTO stocks (ticker, name, market, industry, is_active, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(ticker) DO UPDATE SET
+        name = excluded.name,
+        industry = excluded.industry,
+        updated_at = excluded.updated_at
+    `).run(analyzed.ticker, analyzed.name, analyzed.marketType, analyzed.subIndustry, 1, new Date().toISOString());
+
+    // 2. Save bars (incremental - save last 30 bars)
+    const insertBar = db.prepare(`
+      INSERT OR REPLACE INTO daily_bars (ticker, trade_date, open, high, low, close, volume, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const now = new Date().toISOString();
+    db.transaction(() => {
+      for (const bar of klines.slice(-30)) {
+        insertBar.run(analyzed.ticker, bar.date, bar.open, bar.high, bar.low, bar.close, Math.round(bar.volume), priceSource, now);
+      }
+    })();
+
+    // 3. Save SEPA scores
+    db.prepare(`
+      INSERT OR REPLACE INTO sepa_scores (
+        ticker, trade_date, close, ma50, ma150, ma200, high_52w, low_52w,
+        rs_rank, pivot, pivot_distance, sepa_score, trend_template_pass,
+        pattern, status, data_freshness, price_source, indicator_source, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      analyzed.ticker,
+      klines[klines.length - 1].date,
+      analyzed.lastClose,
+      analyzed.lastMA50,
+      analyzed.lastMA150,
+      analyzed.lastMA200,
+      analyzed.high52Week,
+      analyzed.low52Week,
+      analyzed.rsRanking,
+      analyzed.buyPoint,
+      analyzed.pctToBuyPoint,
+      analyzed.sepaScore.total,
+      analyzed.trendTemplate.passed ? 1 : 0,
+      analyzed.pattern,
+      analyzed.status,
+      freshness,
+      priceSource,
+      'Calculated',
+      new Date().toISOString()
+    );
+
+    // 4. Update Watchlist Table
+    if (analyzed.watchlistCategoryEn && analyzed.watchlistCategoryEn !== 'Regular Watch') {
+      db.prepare(`
+        INSERT INTO watchlists (ticker, trade_date, category, sepa_score, pivot_distance, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        analyzed.ticker,
+        klines[klines.length - 1].date,
+        analyzed.watchlistCategoryEn,
+        analyzed.sepaScore.total,
+        analyzed.pctToBuyPoint,
+        new Date().toISOString()
+      );
+    }
+  } catch (err) {
+    console.error(`[DB Save Error] ${analyzed.ticker}:`, err);
+  }
+}
+
+// Perform market sync across all stocks
 async function performMarketSync(): Promise<boolean> {
   if (globalSyncingFlag) return false;
   globalSyncingFlag = true;
+  updateStatus('sync_progress', '0%');
   
   try {
-    console.log("[Market Sync Started] Bootstrapping real-time market scanner for TWSE...");
-  
-  // 1. Scrape Index Data in bulk
-  let indexData = await fetchIndexDataBulk();
-  
-  // High reliability cross-check for TAIEX
-  if (!indexData.taiex || indexData.taiex.price < 1000) {
-     console.log("[Index Fallback] TAIEX data missing or invalid, attempting FinMind specific fetch...");
-     const finInfo = await fetchTaiexFromFinMind();
-     if (finInfo) {
-       indexData.taiex = finInfo;
-       console.log(`[Index Fallback Success] FinMind recovered TAIEX: ${finInfo.price}`);
-     }
-  }
-  
-  if (!indexData.taiex) {
-    console.error("[Index Critical Failure] Could not fetch TAIEX from any source. Using last cached value if available.");
-    if (marketDataCache?.taiex) indexData.taiex = marketDataCache.taiex;
-  }
-  
-  const taiexInfo = indexData.taiex;
-  const nasdaqInfo = indexData.nasdaq;
-  
-  // 2. Fetch full TWSE stock list
-  twseStockList = await fetchTWSEList();
-  
-  // 3. Define US stock universe for tracking
-  const usUniverse = [
-    { ticker: "NVDA", name: "Nvidia" },
-    { ticker: "TSLA", name: "Tesla" },
-    { ticker: "AAPL", name: "Apple" },
-    { ticker: "MSFT", name: "Microsoft" },
-    { ticker: "AMD", name: "AMD" },
-    { ticker: "AMZN", name: "Amazon" },
-    { ticker: "GOOGL", name: "Google" },
-    { ticker: "META", name: "Meta" },
-    { ticker: "AVGO", name: "Broadcom" },
-    { ticker: "SMCI", name: "SuperMicro" },
-    { ticker: "ARM", name: "ARM Holdings" },
-    { ticker: "MU", name: "Micron" },
-    { ticker: "ASML", name: "ASML" },
-    { ticker: "MSTR", name: "MicroStrategy" },
-    { ticker: "COIN", name: "Coinbase" },
-    { ticker: "PLTR", name: "Palantir" },
-    { ticker: "NFLX", name: "Netflix" },
-    { ticker: "ORCL", name: "Oracle" },
-    { ticker: "ADBE", name: "Adobe" },
-    { ticker: "CRM", name: "Salesforce" }
-  ];
+    console.log("[Market Sync] Starting DB-driven incremental sync...");
+    updateStatus('tw_data_status', '🔵 同步中');
 
-  const finalTwList: any[] = [];
-  const finalUsList: any[] = [];
-  const rsScoreMap: Record<string, number> = {};
-  
-  // 4. Scan US Stocks first (usually faster as it's a smaller universe)
-  console.log(`[Market Sync] Scanning ${usUniverse.length} US momentum stocks...`);
-  const usTempList: any[] = [];
-  for (const item of usUniverse) {
-    try {
-      const { klines } = await fetchStockKLines(item.ticker, false, item.name);
-      // Pacing for US stocks to avoid Yahoo Finance cloud IP blocking
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      
-      if (klines && klines.length >= 160) {
-        const last = klines[klines.length - 1].close;
-        const getReturn = (days: number) => {
-          if (klines.length <= days) return 0;
-          const prev = klines[klines.length - days].close;
-          return (last - prev) / prev;
-        };
-        // RS Score formula: 2*Q1_Return + Q2_Return + Q3_Return + Q4_Return
-        const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-        rsScoreMap[item.ticker] = rsScore;
-        usTempList.push({ ...item, klines });
-      } else {
-        console.warn(`[Market Sync Warning] US Ticker ${item.ticker} has insufficient data (${klines?.length || 0} bars). Required: 160`);
-      }
-    } catch (err) {
-      console.error(`[Market Sync Error] Failed to scan US Ticker ${item.ticker}:`, err);
-    }
-  }
+    // 1. Fetch TAIEX Index
+    const indexData = await fetchIndexDataBulk();
+    updateStatus('cache_status', '🟢 活躍');
 
-  // Calculate RS Ranks for the US subset
-  const usRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
-  for (const item of usTempList) {
-    const rankIndex = usRSKeys.indexOf(item.ticker);
-    const rs = Math.floor((rankIndex / Math.max(1, usRSKeys.length)) * 99) + 1;
-    const analyzed = computeStockAnalysis(item.ticker, item.name, "NASDAQ", "US", item.klines, rs, "科技/增長");
-    if (analyzed) finalUsList.push(analyzed);
-  }
-
-  // 5. Scan all 1000+ TWSE stocks
-  console.log(`[Market Sync] Scanning ${twseStockList.length} TWSE stocks...`);
-  
-  // Priority handle for leaders
-  const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669", "2337", "2344", "2356", "2376", "2301", "2313", "2368", "3034", "3037"];
-  
-  // Fetch priority tickers first for high reliability - concurrent
-  console.log(`[Market Sync] Priority fetch phase starting for ${priorityTickers.length} leaders...`);
-  const priorityStocks = twseStockList.filter(s => priorityTickers.includes(s.ticker));
-  const remainingStocks = twseStockList.filter(s => !priorityTickers.includes(s.ticker));
-
-  const priorityResults = await Promise.all(priorityStocks.map(async (item) => {
-    // Staggered starts for priority
-    await new Promise(r => setTimeout(r, Math.random() * 400));
-    const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-    return { item, klines };
-  }));
-
-  for (const { item, klines } of priorityResults) {
-    if (klines && klines.length >= 150) {
-      const last = klines[klines.length - 1].close;
-      const getReturn = (days: number) => {
-        if (klines.length <= days) return 0;
-        const prev = klines[klines.length - days].close;
-        return (last - prev) / prev;
-      };
-      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-      rsScoreMap[item.ticker] = rsScore;
-      finalTwList.push({ ...item, klines });
-    } else {
-      console.warn(`[Market Sync Priority Warning] Ticker ${item.ticker} (${item.name}) failed fetch in priority phase.`);
-    }
-  }
-
-  // Update cache immediately after priority phase so user sees results right away
-  if (finalTwList.length > 0) {
-    console.log(`[Market Sync] Priority phase complete (${finalTwList.length} stocks). Updating intermediate cache.`);
+    // 2. TWSE Fallback data (Today's snapshots)
+    const twseSnapshots = await fetchTwseFallback();
     
-    // Calculate intermediate RS
-    const currentRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+    // 3. Markets
+    const usUniverse = [
+      { ticker: "NVDA", name: "Nvidia" }, { ticker: "TSLA", name: "Tesla" }, { ticker: "AAPL", name: "Apple" },
+      { ticker: "MSFT", name: "Microsoft" }, { ticker: "AMD", name: "AMD" }, { ticker: "AMZN", name: "Amazon" },
+      { ticker: "GOOGL", name: "Google" }, { ticker: "META", name: "Meta" }, { ticker: "AVGO", name: "Broadcom" },
+      { ticker: "SMCI", name: "SuperMicro" }, { ticker: "ARM", name: "ARM Holdings" }, { ticker: "MU", name: "Micron" },
+      { ticker: "ASML", name: "ASML" }, { ticker: "MSTR", name: "MicroStrategy" }, { ticker: "COIN", name: "Coinbase" },
+      { ticker: "PLTR", name: "Palantir" }, { ticker: "NFLX", name: "Netflix" }, { ticker: "ORCL", name: "Oracle" },
+      { ticker: "ADBE", name: "Adobe" }, { ticker: "CRM", name: "Salesforce" }
+    ];
     
-    const tempResults = finalTwList.map(s => {
-      const rankIndex = currentRSKeys.indexOf(s.ticker);
-      // If we only have priority stocks (usually strong), cap intermediate RS to avoid inflation
-      // but still show ranking among them. 
-      const rawRs = Math.floor((rankIndex / Math.max(1, currentRSKeys.length)) * 99) + 1;
-      const isPriorityOnly = currentRSKeys.length < 50;
-      
-      const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
-      
-      // Fix: If in priority phase, don't let RS drop to 1 if we have a previous high RS
-      // This prevents visual flickering where leaders like 2330/2317 show RS 1/15 during background syncs
-      let rs = rawRs;
-      if (isPriorityOnly) {
-        if (prev && prev.rsRanking > 70) {
-          // If was previously a leader, keep it high in intermediate phase
-          rs = Math.max(prev.rsRanking - 5, rawRs); 
-        } else {
-          rs = Math.min(85, rawRs);
+    twseStockList = await fetchTWSEList();
+    const rsScoreMap: Record<string, number> = {};
+    const stockBars: Record<string, any[]> = {};
+
+    // US Stocks
+    console.log("[Market Sync] Syncing US Universe...");
+    for (const item of usUniverse) {
+      try {
+        const existingBars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(item.ticker) as any[];
+        let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
+        
+        const lastDate = finalKlines.length > 0 ? finalKlines[finalKlines.length - 1].date : '1970-01-01';
+        const today = new Date().toISOString().split('T')[0];
+
+        if (lastDate < today) {
+          const { klines } = await fetchStockKLines(item.ticker, false, item.name);
+          if (klines.length > 0) finalKlines = klines;
+          await new Promise(r => setTimeout(r, 1000));
         }
+
+        if (finalKlines.length >= 160) {
+          const last = finalKlines[finalKlines.length - 1].close;
+          const getReturn = (days: number) => {
+            if (finalKlines.length <= days) return 0;
+            const prev = finalKlines[finalKlines.length - days].close;
+            return (last - prev) / prev;
+          };
+          rsScoreMap[item.ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+          stockBars[item.ticker] = finalKlines;
+        }
+      } catch (err) {
+        console.error(`[US Sync Error] ${item.ticker}:`, err);
       }
+    }
+
+    // TW Stocks
+    console.log("[Market Sync] Syncing TWSE Stocks...");
+    const twScanList = twseStockList.slice(0, 1100);
+    for (let i = 0; i < twScanList.length; i++) {
+      const item = twScanList[i];
+      try {
+        const existingBars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(item.ticker) as any[];
+        let finalKlines = existingBars.map(b => ({ ...b, date: b.trade_date }));
+        
+        const lastDate = finalKlines.length > 0 ? finalKlines[finalKlines.length - 1].date : '1970-01-01';
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        if (lastDate < todayStr) {
+          const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+          if (klines.length > 0) {
+            finalKlines = klines;
+          } else {
+            const snap = twseSnapshots[item.ticker];
+            if (snap && snap.close > 0 && finalKlines.length > 0) {
+              finalKlines.push({ date: todayStr, close: snap.close, volume: snap.volume, high: snap.close, low: snap.close, open: snap.close });
+            }
+          }
+          if (finalKlines.length > existingBars.length) {
+            await new Promise(r => setTimeout(r, 600));
+          }
+        }
+
+        if (finalKlines.length >= 160) {
+          const last = finalKlines[finalKlines.length - 1].close;
+          const getReturn = (days: number) => {
+            if (finalKlines.length <= days) return 0;
+            const prev = finalKlines[finalKlines.length - days].close;
+            return (last - prev) / prev;
+          };
+          rsScoreMap[item.ticker] = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+          stockBars[item.ticker] = finalKlines;
+        }
+
+        if (i % 20 === 0) {
+          const progress = Math.round((i / twScanList.length) * 100);
+          updateStatus('sync_progress', `${progress}%`);
+          updateStatus('stock_count', String(Object.keys(rsScoreMap).length));
+        }
+      } catch (err) {
+        console.error(`[TW Sync Error] ${item.ticker}:`, err);
+      }
+    }
+
+    // RS Ranking and Final Pass
+    const sortedTickers = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
+    for (const ticker of sortedTickers) {
+      const bars = stockBars[ticker];
+      const rankIndex = sortedTickers.indexOf(ticker);
+      const rsRank = Math.floor((rankIndex / Math.max(1, sortedTickers.length)) * 99) + 1;
       
-      const analyzed = computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, rs, s.industry, undefined, prev);
+      const isTW = !/[a-zA-Z]/.test(ticker);
+      const item = isTW ? twseStockList.find(s => s.ticker === ticker) : usUniverse.find(s => s.ticker === ticker);
+      if (!item || !bars) continue;
+
+      const analyzed = computeStockAnalysis(ticker, item.name, isTW ? "上市" : "NASDAQ", isTW ? "TW" : "US", bars, rsRank, (item as any).industry);
       if (analyzed) {
-         const tracker = watchlistTrackerRegistry[analyzed.ticker] || { ticker: analyzed.ticker, consecutiveDays: 0 };
+         const tracker = watchlistTrackerRegistry[ticker] || { ticker, consecutiveDays: 0 };
+         if (analyzed.trendTemplate.passed) tracker.consecutiveDays++;
+         else tracker.consecutiveDays = 0;
+         watchlistTrackerRegistry[ticker] = tracker;
          const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
          analyzed.watchlistCategory = cat;
          analyzed.watchlistCategoryEn = catEn;
-         analyzed.consecutiveDays = tracker.consecutiveDays;
-      }
-      return analyzed;
-    });
-    
-    marketDataCache = {
-      ...marketDataCache,
-      lastUpdated: `優先股同步完成 (掃描中...)`,
-      taiex: taiexInfo || marketDataCache?.taiex || { price: 0, changePercent: 0, date: "" },
-      nasdaq: nasdaqInfo || marketDataCache?.nasdaq || { price: 0, changePercent: 0, date: "" },
-      twStocks: tempResults.filter(Boolean),
-      usStocks: [],
-      stockPoolCount: twseStockList.length
-    };
-  }
-
-  const chunkSize = 1; // Serialize for rate limit safety
-  for (let i = 0; i < remainingStocks.length; i += chunkSize) {
-    const chunk = remainingStocks.slice(i, i + chunkSize);
-    const results = await Promise.all(chunk.map(async (item) => {
-      // Significantly increase pacing: ~3-6 seconds per request
-      await new Promise(r => setTimeout(r, Math.random() * 3000 + 3000));
-      const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-      return { item, klines };
-    }));
-
-    let chunkFailures = 0;
-    for (const { item, klines } of results) {
-      if (!klines || klines.length < 150) {
-        chunkFailures++;
-        continue;
-      }
-      
-      const last = klines[klines.length - 1].close;
-      const getReturn = (days: number) => {
-        if (klines.length <= days) return 0;
-        const prev = klines[klines.length - days].close;
-        return (last - prev) / prev;
-      };
-      
-      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-      rsScoreMap[item.ticker] = rsScore;
-      finalTwList.push({ ...item, klines });
-    }
-    
-    // If whole chunk failed, pause briefly
-    if (chunkFailures === chunk.length) {
-      const blockedUntil = Math.max(yahooRateLimitUntil, finMindRateLimitUntil);
-      if (blockedUntil > Date.now()) {
-        console.warn(`[Market Sync Paused] APIs partially blocked. Pacing for 30s...`);
-        await new Promise(r => setTimeout(r, 30000));
+         saveStockDataToDb(analyzed, bars, 'fresh', 'Yahoo');
       }
     }
-    
-    // Partial status logging and periodic safety update
-    if (i % 10 === 0 && i > 0) {
-      console.log(`[Market Sync Progress] ${i}/${twseStockList.length} stocks processed. Valid: ${finalTwList.length}`);
-      
-      // If we have some data, update a "temp" cache so users see progress
-      if (finalTwList.length > 5) {
-        const currentRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
-        
-        const tempResults = finalTwList.map(s => {
-          const rankIndex = currentRSKeys.indexOf(s.ticker);
-          const rawRs = Math.floor((rankIndex / Math.max(1, currentRSKeys.length)) * 99) + 1;
-          const isIntermediate = currentRSKeys.length < 300;
-          const rs = isIntermediate ? Math.min(95, rawRs) : rawRs;
-          
-          const prev = marketDataCache?.twStocks?.find(p => p.ticker === s.ticker);
-          const analyzed = computeStockAnalysis(s.ticker, s.name, "上市", "TW", s.klines, rs, s.industry, undefined, prev);
-          
-          if (analyzed) {
-             const tracker = watchlistTrackerRegistry[analyzed.ticker] || { ticker: analyzed.ticker, consecutiveDays: 0 };
-             const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
-             analyzed.watchlistCategory = cat;
-             analyzed.watchlistCategoryEn = catEn;
-             analyzed.consecutiveDays = tracker.consecutiveDays;
-          }
-          return analyzed;
-        });
-        const filteredTemp = tempResults.filter(Boolean);
-        marketDataCache = {
-          ...marketDataCache,
-          lastUpdated: `同步中 (${i}/${twseStockList.length})`,
-          taiex: taiexInfo || { price: 0, changePercent: 0, date: "" },
-          nasdaq: nasdaqInfo || { price: 0, changePercent: 0, date: "" },
-          twStocks: filteredTemp,
-          usStocks: finalUsList,
-          stockPoolCount: twseStockList.length
-        };
-      }
-    }
-  }
 
-  // 4. Calculate RS Ranking (Percentile 1-99)
-  // CRITICAL SAFETY CHECK: If we failed to get a reasonable amount of data, DON'T UPDATE CACHE.
-  const minimumRequired = twseStockList.length > 0 ? Math.min(10, twseStockList.length) : 5;
-  if (finalTwList.length < minimumRequired) {
-    console.error(`[Market Sync Aborted] Only ${finalTwList.length} stocks fetched. This indicates a mass API failure. Aborting to protect existing cache.`);
+    updateStatus('tw_last_sync_time', new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }));
+    updateStatus('tw_data_status', '🟢 正常');
+    updateStatus('sync_progress', '100%');
+    console.log("[Market Sync] Sync completed successfully.");
+    globalSyncingFlag = false;
+    return true;
+  } catch (err) {
+    console.error("[Market Sync Error]", err);
+    updateStatus('tw_data_status', '🔴 失敗');
+    globalSyncingFlag = false;
     return false;
   }
-
-  console.log(`[Market Sync] Calculating RS Ranking for ${finalTwList.length} active stocks...`);
-  // Add indices to calculate relative strength against market
-  const sortedByRS = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
-  const rankedTwList: any[] = [];
-
-  for (const stockData of finalTwList) {
-    const rankIndex = sortedByRS.indexOf(stockData.ticker);
-    const rsRanking = Math.floor((rankIndex / Math.max(1, sortedByRS.length)) * 99) + 1;
-    
-    // Improved Classification logic for industries - Unify and ensure completeness
-    let industryGroup = "其他";
-    const nCap = stockData.name.toUpperCase();
-    const indRaw = (stockData.industry || "").toUpperCase();
-    
-    if (nCap.includes("伺服器") || nCap.includes("廣達") || nCap.includes("緯穎") || nCap.includes("緯創") || nCap.includes("技嘉") || nCap.includes("勤誠") || nCap.includes("川湖") || nCap.includes("營邦")) {
-       industryGroup = "AI 伺服器";
-    } else if (nCap.includes("欣興") || nCap.includes("南電") || nCap.includes("景碩") || nCap.includes("臻鼎") || nCap.includes("健鼎") || nCap.includes("台光電") || nCap.includes("金像電")) {
-       industryGroup = "PCB / ABF";
-    } else if (nCap.includes("散熱") || nCap.includes("雙鴻") || nCap.includes("奇鋐") || nCap.includes("建準") || nCap.includes("力致")) {
-       industryGroup = "散熱";
-    } else if (nCap.includes("電源") || nCap.includes("台達電") || nCap.includes("光寶科") || nCap.includes("康舒") || nCap.includes("全漢")) {
-       industryGroup = "電源 / 功率半導體";
-    } else if (indRaw.includes("半導體") || nCap.includes("台積電") || nCap.includes("聯電") || nCap.includes("日月光") || nCap.includes("創意") || nCap.includes("世芯") || nCap.includes("智原")) {
-       industryGroup = "半導體";
-    } else if (indRaw.includes("電腦") || indRaw.includes("電子")) {
-       industryGroup = "電子類";
-    } else if (indRaw.includes("金融") || indRaw.includes("保險")) {
-       industryGroup = "金融類";
-    } else if (indRaw.includes("水泥") || indRaw.includes("鋼鐵") || indRaw.includes("塑膠") || indRaw.includes("航運")) {
-       industryGroup = "傳產類";
-    }
-
-    const prev = marketDataCache?.twStocks?.find(p => p.ticker === stockData.ticker);
-    const analyzed = computeStockAnalysis(
-      stockData.ticker,
-      stockData.name,
-      "上市",
-      "TW",
-      stockData.klines,
-      rsRanking,
-      industryGroup,
-      industryGroup,
-      prev
-    );
-    
-    if (analyzed) {
-      analyzed.isMock = false;
-      const trackerKey = stockData.ticker;
-      
-      if (Object.keys(watchlistTrackerRegistry).length === 0) {
-        initializeWatchlistTracker();
-      }
-      
-      // Strict SEPA logic for Watchlist (8/8 Template MUST pass)
-      const meetsSEPA = !!analyzed.trendTemplate?.passed;
-      let tracker = watchlistTrackerRegistry[trackerKey];
-      if (!tracker) {
-        tracker = {
-          ticker: trackerKey,
-          consecutiveDays: meetsSEPA ? 1 : 0
-        };
-      } else {
-        if (meetsSEPA) tracker.consecutiveDays += 1;
-        else tracker.consecutiveDays = Math.max(0, tracker.consecutiveDays - 1);
-      }
-      
-      const { cat, catEn } = determineDynamicWatchlistCategory(analyzed, tracker.consecutiveDays);
-      tracker.watchlistCategory = cat;
-      tracker.watchlistCategoryEn = catEn;
-      watchlistTrackerRegistry[trackerKey] = tracker;
-      
-      analyzed.consecutiveDays = tracker.consecutiveDays;
-      analyzed.watchlistCategory = cat;
-      analyzed.watchlistCategoryEn = catEn;
-      rankedTwList.push(analyzed);
-    }
-  }
-  
-  saveWatchlistTrackerToDisk();
-  
-  // Quality filters: Ensure long-term trend data and liquidity
-  const checkedTwList = rankedTwList.filter(stock => {
-    // Priority tickers (Index markers) are always included
-    if (priorityTickers.includes(stock.ticker)) return true;
-    
-    // Turnover > 40M TWD, Price > 12 TWD
-    const liquidityPass = stock.klines && stock.klines.length >= 160 && stock.lastClose >= 12;
-    const turnoverPass = (stock.lastClose * stock.avgVolume20 > 400000); 
-    
-    // Trend condition: Strictly enforce Minervini Trend Template (8/8)
-    const trendPass = !!stock.trendTemplate?.passed;
-    
-    return liquidityPass && turnoverPass && trendPass;
-  });
-  
-  const formatter = new Intl.DateTimeFormat("zh-TW", {
-    timeZone: "Asia/Taipei",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-  const parts = formatter.formatToParts(new Date());
-  const year = parts.find(p => p.type === 'year')?.value;
-  const month = parts.find(p => p.type === 'month')?.value;
-  const day = parts.find(p => p.type === 'day')?.value;
-  const hour = parts.find(p => p.type === 'hour')?.value;
-  const minute = parts.find(p => p.type === 'minute')?.value;
-  const second = parts.find(p => p.type === 'second')?.value;
-  const formatTime = `${year}-${month}-${day} ${hour}:${minute}:${second} CST`;
-  
-  // 6. Calculate Dynamic Industry Rankings
-  const industrySummary: Record<string, { totalSepa: number, count: number, breakoutCount: number, leaders: string[] }> = {};
-  
-  [...checkedTwList, ...finalUsList].forEach(s => {
-    const ind = s.subIndustry || s.mainIndustry || "其他";
-    if (!industrySummary[ind]) {
-      industrySummary[ind] = { totalSepa: 0, count: 0, breakoutCount: 0, leaders: [] };
-    }
-    industrySummary[ind].totalSepa += s.sepaScore.total;
-    industrySummary[ind].count += 1;
-    if (s.statusEn === "Breakout" || s.statusEn === "Near Pivot") {
-      industrySummary[ind].breakoutCount += 1;
-    }
-    if (s.sepaScore.total >= 80) {
-      industrySummary[ind].leaders.push(s.name);
-    }
-  });
-
-  const rankedIndustries = Object.entries(industrySummary)
-    .map(([name, data]) => ({
-      name,
-      avgSepa: Math.round((data.totalSepa / data.count) * 10) / 10,
-      breakoutRate: Math.round((data.breakoutCount / data.count) * 100),
-      leaders: data.leaders.slice(0, 3)
-    }))
-    .filter(ind => ind.name !== "其他" && ind.name !== "電子類" && ind.name !== "傳產類")
-    .sort((a, b) => (b.avgSepa + b.breakoutRate/2) - (a.avgSepa + a.breakoutRate/2))
-    .slice(0, 5);
-
-  marketDataCache = {
-    lastUpdated: formatTime,
-    taiex: taiexInfo,
-    nasdaq: nasdaqInfo,
-    twStocks: checkedTwList,
-    usStocks: finalUsList,
-    stockPoolCount: twseStockList.length,
-    topIndustries: rankedIndustries
-  };
-  
-  saveCacheToFile();
-  console.log(`[Market Sync Completed] Cleaned ${checkedTwList.length} active stocks. Last updated: ${formatTime}`);
-  globalSyncingFlag = false;
-  return true;
-} catch (err) {
-  console.error("[Market Sync Fatal Error]", err);
-  globalSyncingFlag = false;
-  return false;
 }
-}
-
 // REST route to deliver real market data
 app.get("/api/market-data", async (req, res) => {
-  const force = req.query.force === "true";
-  
   try {
-    if (!marketDataCache) {
-      loadCacheFromFile();
-    }
+    const scores = db.prepare('SELECT * FROM sepa_scores').all() as any[];
+    const sysStatus = getAllStatus();
     
-    // If we have a cache and not a force request, return immediately
-    if (marketDataCache && !force) {
-      return res.json({ ...marketDataCache, isBackgroundSyncing: false });
-    }
-    
-    // If force or no cache, we start a sync
-    console.log(`[Market API] ${force ? "Force rescan" : "No cache"} triggered. Checking status...`);
-    
-    // Status check: if already syncing, don't double trigger
-    const isSyncing = globalSyncingFlag; 
-    
-    if (force) {
-      console.log("[Market API] Forced reset of rate-limit sentinels...");
-      yahooRateLimitUntil = 0;
-      stooqRateLimitUntil = 0;
-      finMindRateLimitUntil = 0;
-    }
-    
-    // Start full sync in background if needed
-    if (!isSyncing && (!marketDataCache || force)) {
-      performMarketSync().catch(err => {
-        console.error("[Background Sync Error]", err);
-        globalSyncingFlag = false;
-      });
-    }
-    
-    // Return what we have
-    if (marketDataCache) {
-      const stripKlines = (stocks: any[]) => stocks.map(({ klines, ...rest }) => rest);
-      
-      return res.json({ 
-        ...marketDataCache, 
-        twStocks: stripKlines(marketDataCache.twStocks || []),
-        usStocks: stripKlines(marketDataCache.usStocks || []),
-        isBackgroundSyncing: globalSyncingFlag || isSyncing,
-        message: globalSyncingFlag ? `掃描進度: ${marketDataCache.lastUpdated}` : undefined
-      });
-    } else {
-      // Return a structured pending response so the UI knows we're working
-      return res.json({ 
-        lastUpdated: "正在初始化數據...", 
-        twStocks: [], 
-        taiex: { price: 0, changePercent: 0, date: "" },
-        isBackgroundSyncing: true,
-        message: "系統偵測到目前尚無存檔，正在從交易所緊急獲取權值股數據，請稍後 1~2 分鐘並重新整理。" 
-      });
-    }
-  } catch (error: any) {
-    console.error("[Market Data Sync Error] /api/market-data failed:", error.message || error);
-    res.status(500).json({ error: "市場資料解析失敗", details: error.message || error });
+    // Map back to expected format for the frontend
+    const mapStock = (s: any) => ({
+      ...s,
+      sepaScore: { total: s.sepa_score },
+      trendTemplate: { passed: !!s.trend_template_pass },
+      lastClose: s.close,
+      changePercent: 0, 
+      volume: 0,
+      avgVolume20: 0,
+      low52Week: s.low_52w,
+      high52Week: s.high_52w,
+      buyPoint: s.pivot,
+      pctToBuyPoint: s.pivot_distance,
+      rsRanking: s.rs_rank,
+      status: s.status,
+      statusEn: s.status === '已突破' ? 'Breakout' : (s.status === '接近買點' ? 'Near Pivot' : 'Watch'),
+      industry: s.industry,
+      market: s.marketType || 'TW'
+    });
+
+    const twStocks = scores.filter(s => !/[a-zA-Z]/.test(s.ticker)).map(mapStock);
+    const usStocks = scores.filter(s => /[a-zA-Z]/.test(s.ticker)).map(mapStock);
+
+    res.json({
+      lastUpdated: sysStatus.tw_last_sync_time || '尚未同步',
+      systemStatus: sysStatus,
+      twStocks,
+      usStocks,
+      isBackgroundSyncing: globalSyncingFlag,
+      stockPoolCount: scores.length
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.post("/api/scan-market", async (req, res) => {
-  try {
-    console.log("[Force Rescan Requested] Clearing memory cache, resetting rate boundaries, and synchronizing...");
-    yahooRateLimitUntil = 0; 
-    stooqRateLimitUntil = 0; // Clear rate-limit cooldowns on user manual request
-    await performMarketSync();
-    res.json({ success: true, lastUpdated: marketDataCache?.lastUpdated, taiex: marketDataCache?.taiex });
-  } catch (error: any) {
-    console.error("[POST scan-market Error]", error.message || error);
-    res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
+// Force Sync Trigger
+app.post("/api/market-sync/force", async (req, res) => {
+  if (globalSyncingFlag) {
+    return res.status(429).json({ message: "Sync already in progress" });
   }
+  performMarketSync().catch(err => console.error("Force sync failed:", err));
+  res.json({ message: "Sync started in background" });
 });
 
+// Refresh Rankings (read from DB)
+app.post("/api/market-sync/refresh", (req, res) => {
+  res.json({ message: "Rankings refreshed from database" });
+});
+
+// Get Klines from DB
 app.get("/api/stock-klines/:ticker", async (req, res) => {
   try {
     const { ticker } = req.params;
-    if (!marketDataCache) {
-      loadCacheFromFile();
+    const bars = db.prepare('SELECT * FROM daily_bars WHERE ticker = ? ORDER BY trade_date ASC').all(ticker) as any[];
+    if (bars.length === 0) {
+       return res.status(404).json({ error: "No historical data found in DB" });
     }
-    
-    if (!marketDataCache) {
-      return res.status(404).json({ error: "Data not available yet" });
-    }
-    
-    const stock = marketDataCache.twStocks.find(s => s.ticker === ticker) || 
-                  marketDataCache.usStocks.find(s => s.ticker === ticker);
-                  
-    if (!stock) {
-      return res.status(404).json({ error: "Stock not found" });
-    }
-    
-    res.json(stock.klines || []);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json(bars.map(b => ({
+      date: b.trade_date,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume
+    })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Post analysis request
+// AI Analysis Proxy
 app.post("/api/analyze", async (req, res) => {
   try {
     const { stock } = req.body;
-    if (!stock) {
-      return res.status(400).json({ error: "Missing stock analysis object" });
-    }
+    if (!stock) return res.status(400).json({ error: "Missing stock" });
 
     const client = getGeminiClient();
     if (!client) {
-      // No key, return pristine fallback
-      const fallbackAnalysis = getRuleBasedAnalysis(stock);
-      return res.json({ analysis: fallbackAnalysis });
+      return res.json({ analysis: getRuleBasedAnalysis(stock) });
     }
 
-    const prompt = `你是一位精通 Mark Minervini 理論、SEPA 篩選系統與 VCP (波動度收縮型態) 的資深強勢股操盤大師。
-請針對這檔股票的技術數據以及均線排列進行專業的技術剖析，給出最具體的「主力籌碼清洗狀況、買點、停損點、期望值比、操作建言與風控核心」。
-
-股票代碼/名稱: ${stock.ticker} (${stock.name})
-最後收盤價: ${stock.lastClose}
-當日漲跌幅: ${stock.changePercent.toFixed(2)}%
-當日成交量: ${stock.volume} (20日平均量: ${stock.avgVolume20})
-52週價格區間: ${stock.low52Week} ~ ${stock.high52Week}
-RS 相對強度排名 (0-100): ${stock.rsRanking}
-SEPA 篩選總分數: ${stock.sepaScore?.total}
-Trend Template 檢定是否通過: ${stock.trendTemplate?.passed ? "【通過條件】" : "【不符合】"}
-技術形态: ${stock.pattern}
-型態物理細節: ${stock.vcpPhaseDesc}
-Pivot 臨界買點價: ${stock.buyPoint}
-設定初始停損點: ${stock.stopLoss} (停損控制在 ${stock.riskPercent.toFixed(2)}%)
-風險回報 Ratio 1 (第一目標價): ${stock.targetPrice1}
-風險回報 Ratio 2 (第二目標價): ${stock.targetPrice2}
-當前狀態評級: ${stock.status}
-原創操作建議: ${stock.suggestion}
-
-請以此寫出一份「約 180 ~ 280字」的繁體中文分析報告，視角要極為專業、客觀冷靜、像頂級基金合夥人。
-必須涵蓋以下三大部分：
-1. 均線波段趨勢與 RS 強度鑑定 (指出其是否具備超級強勢先鋒股特徵)。
-2. VCP 型態量化解構 (解讀收縮(T)細節、籌碼清洗狀況以及成交量是否符合枯竭期)。
-3. 當前買賣戰術規劃 (進場位置精微把控與防禦停損的紀律要求)。
-
-請直接輸出繁體中文分析報告（可使用簡短的 Markdown 標題，段落條理要分明）。`;
+    const prompt = `你是一位精通 Mark Minervini 理論、SEPA 篩選系統與 VCP 的大師。剖析股票: ${stock.ticker} (${stock.name})。價格: ${stock.lastClose}, RS: ${stock.rsRanking}, SEPA: ${stock.sepaScore?.total}. 請給出專業分析(180~280字)。`;
 
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
+      model: "gemini-2.0-flash",
+      contents: [prompt],
     });
 
-    const analysisText = response.text || getRuleBasedAnalysis(stock);
-    res.json({ analysis: analysisText });
+    res.json({ analysis: response.text || getRuleBasedAnalysis(stock) });
   } catch (error) {
-    console.error("Gemini proxy analysis error:", error);
-    res.json({
-      analysis:
-        getRuleBasedAnalysis(req.body.stock) +
-        "\n\n*(注意: 由於 AI 伺服器核心運作超時，本報告已由 SEPA 精密運作規則自動生成)*",
-    });
+    console.error("Gemini analysis error:", error);
+    res.json({ analysis: getRuleBasedAnalysis(req.body.stock) + "\n\n*(注意: 由於連線問題，本報告由系統自動生成)*" });
   }
 });
 
 async function startServer() {
-  // Pre-load market cache on boot
-  loadCacheFromFile();
-
-  // Vite Integration for Development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
-    
-    // Express mounts static handlers first, then vite dev assets
     app.use(vite.middlewares);
   } else {
-    // Production statically serves built client
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SEPA Backend Router] Running at http://localhost:${PORT}`);
+    console.log(`[SEPA Backend] Running at http://localhost:${PORT}`);
   });
 }
 

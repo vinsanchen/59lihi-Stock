@@ -26,13 +26,20 @@ export class DataProvider {
   private static topIndustries: any[] = [];
   private static taiexVal = { price: 0, changePercent: 0, date: "" };
   private static nasdaqVal = { price: 0, changePercent: 0, date: "" };
+  private static systemStatus: any = {};
 
-  public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<{ success: boolean; isSyncing: boolean; message?: string }> {
+  public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<{ success: boolean; isSyncing: boolean; message?: string, systemStatus?: any }> {
     if (customWeights) {
       this.weights = customWeights;
     }
     try {
-      const url = `/api/market-data${force ? "?force=true" : ""}`;
+      const url = force ? "/api/market-sync/force" : "/api/market-data";
+      if (force) {
+        const forceRes = await fetch(url, { method: 'POST' });
+        if (!forceRes.ok) throw new Error("同步請求失敗");
+        return { success: true, isSyncing: true, message: "掃描已在背景啟動" };
+      }
+
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error("市場資料同步失敗，請檢查資料來源。");
@@ -41,7 +48,7 @@ export class DataProvider {
       if (data) {
         if (data.lastUpdated) this.lastUpdated = data.lastUpdated;
         if (data.stockPoolCount !== undefined) this.poolCount = data.stockPoolCount;
-        if (data.topIndustries) this.topIndustries = data.topIndustries;
+        if (data.systemStatus) this.systemStatus = data.systemStatus;
         if (data.taiex) this.taiexVal = data.taiex;
         if (data.nasdaq) this.nasdaqVal = data.nasdaq;
         
@@ -167,5 +174,9 @@ export class DataProvider {
 
   public static getTopIndustries() {
     return this.topIndustries;
+  }
+
+  public static getSystemStatus() {
+    return this.systemStatus;
   }
 }
