@@ -37,6 +37,31 @@ export interface SEPAScoreResult {
   penalty?: number;
 }
 
+export interface QuarterEPS {
+  quarter: string;
+  eps: number;
+  yoy: number;
+}
+
+export interface MonthlyRevenue {
+  period: string;
+  revenue: number;
+  yoy: number;
+}
+
+export interface FundamentalData {
+  ticker: string;
+  epsList: QuarterEPS[];
+  revenueList: MonthlyRevenue[];
+  revenueTrend: "營收加速" | "成長持平" | "成長放緩" | "衰退";
+  industry: string;
+  industryTotalStocks: number;
+  industryRsRanking: number;
+  industrySepaRanking: number;
+  fundamentalScore: number;
+  fundamentalRating: "優秀" | "普通" | "偏弱";
+}
+
 export interface StockAnalysis {
   ticker: string;
   name: string;

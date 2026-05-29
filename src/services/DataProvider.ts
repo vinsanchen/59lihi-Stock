@@ -126,6 +126,17 @@ export class DataProvider {
     }
   }
 
+  public static async fetchFundamentals(ticker: string): Promise<any> {
+    try {
+      const res = await fetch(`/api/fundamentals/${ticker}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      console.error("[DataProvider] Failed to fetch fundamentals:", err);
+      return null;
+    }
+  }
+
   public static getTwStocks(weights?: SepaWeights): StockAnalysis[] {
     if (weights) {
       this.weights = weights;

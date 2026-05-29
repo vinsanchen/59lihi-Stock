@@ -1708,6 +1708,214 @@ app.post("/api/scan-market", async (req, res) => {
   }
 });
 
+// ==========================================
+// Fundamental Analysis Data Fetchers
+// ==========================================
+
+async function fetchTWFundamentals(ticker: string): Promise<any> {
+  const cleanTicker = ticker.split(".")[0];
+  const currentDate = new Date();
+  const threeYearsAgo = new Date();
+  threeYearsAgo.setFullYear(currentDate.getFullYear() - 3);
+  const startDateStr = threeYearsAgo.toISOString().split("T")[0];
+
+  try {
+    // 1. Fetch EPS (Financial Statements)
+    const epsUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id=${cleanTicker}&start_date=${startDateStr}`;
+    const epsRes = await fetch(epsUrl);
+    const epsJson: any = await epsRes.json();
+    
+    // 2. Fetch Monthly Revenue
+    const revUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=${cleanTicker}&start_date=${startDateStr}`;
+    const revRes = await fetch(revUrl);
+    const revJson: any = await revRes.json();
+
+    if (epsJson.status !== 200 || revJson.status !== 200) {
+      return null;
+    }
+
+    // Process EPS
+    const rawEps = epsJson.data.filter((d: any) => d.type === "EPS");
+    // Sort by date descending
+    rawEps.sort((a: any, b: any) => b.date.localeCompare(a.date));
+    
+    const epsList: any[] = [];
+    for (let i = 0; i < Math.min(4, rawEps.length); i++) {
+      const current = rawEps[i];
+      const quarter = current.date.substring(0, 7).replace("-", "Q"); // Simplistic parse
+      
+      // Find same quarter last year
+      const lastYearDate = new Date(current.date);
+      lastYearDate.setFullYear(lastYearDate.getFullYear() - 1);
+      const lastYearDateStr = lastYearDate.toISOString().split("T")[0];
+      const lastYear = rawEps.find((d: any) => d.date === lastYearDateStr);
+      
+      let yoy = 0;
+      if (lastYear && lastYear.value !== 0) {
+        yoy = ((current.value - lastYear.value) / Math.abs(lastYear.value)) * 100;
+      }
+      
+      epsList.push({
+        quarter: current.date, // Use date, formatter in frontend
+        eps: current.value,
+        yoy: Math.round(yoy * 10) / 10
+      });
+    }
+
+    // Process Revenue
+    const rawRev = revJson.data;
+    rawRev.sort((a: any, b: any) => b.date.localeCompare(a.date));
+    
+    const revenueList: any[] = [];
+    for (let i = 0; i < Math.min(12, rawRev.length); i++) {
+        const item = rawRev[i];
+        revenueList.push({
+            period: item.date,
+            revenue: item.revenue,
+            yoy: Math.round(item.revenue_year_growth * 10) / 10
+        });
+    }
+
+    // Calculate trend from last 3 months YoY
+    let revenueTrend: any = "成長持平";
+    if (revenueList.length >= 3) {
+        const y3 = revenueList[2].yoy;
+        const y2 = revenueList[1].yoy;
+        const y1 = revenueList[0].yoy; // Most recent
+        
+        if (y1 > y2 && y2 > y3) revenueTrend = "營收加速";
+        else if (y1 < y2 && y2 < y3) revenueTrend = "成長放緩";
+        else if (y1 < 0) revenueTrend = "衰退";
+    }
+
+    return { epsList, revenueList, revenueTrend };
+  } catch (e) {
+    console.error(`[TW Fundamentals Error] ${ticker}:`, e);
+    return null;
+  }
+}
+
+async function fetchUSFundamentals(ticker: string): Promise<any> {
+    try {
+        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=earnings,financialData`;
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            }
+        });
+        if (!res.ok) return null;
+        const json: any = await res.json();
+        const result = json.quoteSummary?.result?.[0];
+        if (!result) return null;
+
+        const earningsChart = result.earnings?.earningsChart?.quarterly || [];
+        const financialsChart = result.earnings?.financialsChart?.quarterly || [];
+
+        const epsList = earningsChart.map((d: any) => ({
+            quarter: d.date,
+            eps: d.actual?.raw || 0,
+            yoy: 0 // Yahoo doesn't give YoY directly here in this simple module
+        })).reverse();
+
+        const revenueList = financialsChart.map((d: any) => ({
+            period: d.date,
+            revenue: d.revenue?.raw || 0,
+            yoy: 0
+        })).reverse();
+
+        // Calculate YoY for EPS if possible
+        // (This is limited as we only have 4 data points from this module usually)
+        
+        let revenueTrend: any = "成長持平";
+        if (revenueList.length >= 3) {
+            const r3 = revenueList[2].revenue;
+            const r2 = revenueList[1].revenue;
+            const r1 = revenueList[0].revenue;
+            if (r1 > r2 && r2 > r3) revenueTrend = "營收加速";
+            else if (r1 < r2 && r2 < r3) revenueTrend = "成長放緩";
+        }
+
+        return { epsList, revenueList, revenueTrend };
+    } catch (e) {
+        console.error(`[US Fundamentals Error] ${ticker}:`, e);
+        return null;
+    }
+}
+
+app.get("/api/fundamentals/:ticker", async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    if (!marketDataCache) {
+      loadCacheFromFile();
+    }
+    if (!marketDataCache) {
+      return res.status(404).json({ error: "Data not available yet" });
+    }
+
+    const stock = marketDataCache.twStocks.find(s => s.ticker === ticker) || 
+                  marketDataCache.usStocks.find(s => s.ticker === ticker);
+                  
+    if (!stock) {
+      return res.status(404).json({ error: "Stock not found" });
+    }
+
+    let fundamentalData: any = null;
+    if (stock.country === "TW") {
+        fundamentalData = await fetchTWFundamentals(ticker);
+    } else {
+        fundamentalData = await fetchUSFundamentals(ticker);
+    }
+
+    if (!fundamentalData) {
+        return res.status(404).json({ error: "尚未取得基本面資料" });
+    }
+
+    // Industry statistics
+    const sameIndustryStocks = [...marketDataCache.twStocks, ...marketDataCache.usStocks].filter(s => s.subIndustry === stock.subIndustry);
+    sameIndustryStocks.sort((a, b) => b.rsRanking - a.rsRanking);
+    const industryRsRanking = sameIndustryStocks.findIndex(s => s.ticker === ticker) + 1;
+
+    sameIndustryStocks.sort((a, b) => b.sepaScore.total - a.sepaScore.total);
+    const industrySepaRanking = sameIndustryStocks.findIndex(s => s.ticker === ticker) + 1;
+
+    // Fundamental Score Calculation (Simplified logic)
+    let fScore = 50;
+    // EPS points
+    if (fundamentalData.epsList?.[0]?.yoy > 20) fScore += 15;
+    if (fundamentalData.epsList?.[0]?.yoy > 50) fScore += 10;
+    if (fundamentalData.epsList?.[1]?.yoy > 20) fScore += 5;
+    
+    // Revenue points
+    if (fundamentalData.revenueTrend === "營收加速") fScore += 15;
+    else if (fundamentalData.revenueTrend === "成長持平") fScore += 5;
+    else if (fundamentalData.revenueTrend === "衰退") fScore -= 20;
+
+    // Ranking points
+    if (industrySepaRanking === 1) fScore += 10;
+    else if (industrySepaRanking <= 3) fScore += 5;
+
+    fScore = Math.max(10, Math.min(100, fScore));
+    let fRating: any = "普通";
+    if (fScore >= 80) fRating = "優秀";
+    else if (fScore < 50) fRating = "偏弱";
+
+    const finalData = {
+        ...fundamentalData,
+        ticker,
+        industry: stock.subIndustry || stock.mainIndustry || "其他",
+        industryTotalStocks: sameIndustryStocks.length,
+        industryRsRanking,
+        industrySepaRanking,
+        fundamentalScore: fScore,
+        fundamentalRating: fRating
+    };
+
+    res.json(finalData);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/stock-klines/:ticker", async (req, res) => {
   try {
     const { ticker } = req.params;

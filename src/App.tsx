@@ -39,6 +39,7 @@ import { DataProvider, DEFAULT_WEIGHTS } from "./services/DataProvider";
 import KLineChart from "./components/KLineChart";
 import SepaScores from "./components/SepaScores";
 import TrendTemplateCheck from "./components/TrendTemplateCheck";
+import FundamentalAnalysis from "./components/FundamentalAnalysis";
 
 // Legendary Mark Minervini principles to rotate
 const MINERVINI_QUOTES = [
@@ -141,6 +142,10 @@ export default function App() {
   const [aiReportCache, setAiReportCache] = useState<{ [ticker: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
 
+  // Fundamental data cache
+  const [fundamentalCache, setFundamentalCache] = useState<{ [ticker: string]: any }>({});
+  const [fundamentalLoading, setFundamentalLoading] = useState(false);
+
   // Initialize stocks lists using live API
   useEffect(() => {
     let active = true;
@@ -203,6 +208,30 @@ export default function App() {
     fetchK();
     return () => { active = false; };
   }, [selectedTicker]);
+
+  // Fundamental data fetcher (triggered only on single view)
+  useEffect(() => {
+    if (activeTab !== "single" || !selectedTicker) return;
+    if (fundamentalCache[selectedTicker]) return;
+
+    let active = true;
+    const loadFundamentals = async () => {
+      setFundamentalLoading(true);
+      try {
+        const data = await DataProvider.fetchFundamentals(selectedTicker);
+        if (active && data) {
+          setFundamentalCache(prev => ({ ...prev, [selectedTicker]: data }));
+        }
+      } catch (e) {
+        console.error("Failed to load fundamentals", e);
+      } finally {
+        if (active) setFundamentalLoading(false);
+      }
+    };
+
+    loadFundamentals();
+    return () => { active = false; };
+  }, [activeTab, selectedTicker]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1884,6 +1913,12 @@ export default function App() {
               <div className="grid grid-cols-1 gap-6">
                 <TrendTemplateCheck stock={activeStock} />
               </div>
+
+              {/* Fundamental Analysis Section (Requested Replacement/Addition) */}
+              <FundamentalAnalysis 
+                data={fundamentalCache[activeStock.ticker] || null} 
+                loading={fundamentalLoading && !fundamentalCache[activeStock.ticker]} 
+              />
 
               {/* Grid 3: Battle-Plan Trade Setup card & Gemini AI master analysis report! */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
