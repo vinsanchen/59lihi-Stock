@@ -85,12 +85,13 @@ export interface StockAnalysis {
   buyPoint: number;        // Pivot 突破價
   originalPivot?: number;  // 原始突破 Pivot
   pivotCreationDate?: string; // Pivot 建立日期
-  pivotStatus?: 'Active' | 'Fixed' | 'Breakout'; // Pivot 狀態
+  pivotStatus?: 'Active' | 'Fixed' | 'Breakout' | 'Pullback'; // Pivot 狀態
   isNewBase?: boolean;     // 是否形成新 Base
+  maxSinceBreakout?: number; // 突破後最高價
   stopLoss: number;        // 初始停損價
   riskPercent: number;     // 停損百分比
-  status: "接近買點" | "已突破" | "可觀察" | "過度延伸，不建議追" | "型態尚未完成" | "不符合";
-  statusEn: "Near Pivot" | "Breakout" | "Watch" | "Overextended" | "Pattern Forming" | "Non-compliant";
+  status: "接近買點" | "已突破" | "可觀察" | "過度延伸，不建議追" | "型態尚未完成" | "不符合" | "突破回撤";
+  statusEn: "Near Pivot" | "Breakout" | "Watch" | "Overextended" | "Pattern Forming" | "Non-compliant" | "Pullback";
   consecutiveDays?: number;
   watchlistCategory?: "核心觀察股" | "接近買點" | "今日突破" | "過度延伸" | "失敗型態" | "一般追蹤";
   watchlistCategoryEn?: "Core Watchlist" | "Near Pivot" | "Breakout Today" | "Extended" | "Failed Setup" | "Regular Watch";

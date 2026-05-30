@@ -453,31 +453,53 @@ function computeStockAnalysis(
   // Pivot locking management
   let pivotPrice = high52Week;
   let pivotCreationDate = new Date().toISOString().split('T')[0];
-  let pivotStatus: 'Active' | 'Fixed' | 'Breakout' = 'Active';
+  let pivotStatus: 'Active' | 'Fixed' | 'Breakout' | 'Pullback' = 'Active';
   let originalPivot = 0;
   let isNewBase = false;
+  let maxSinceBreakout = lastClose;
 
-  let calculatedPivot = high52Week;
+  // Find actual structural high of the base (approx last 60 days)
+  let baseHigh = -Infinity;
+  const analysisPeriod = 60; 
+  const startIndex = Math.max(0, finalKlines.length - analysisPeriod);
+  
+  // To avoid catching the current breakout bar as the pivot high, 
+  // we look at the high slightly before today if it looks like a breakout
+  const isBreakoutBar = volume > avgVolume20 * 1.3 && lastClose > yesterdayClose * 1.02;
+  const pivotScanEnd = isBreakoutBar ? finalKlines.length - 2 : finalKlines.length - 1;
+  const finalPivotScanEnd = Math.max(startIndex, pivotScanEnd);
+
+  for (let i = startIndex; i <= finalPivotScanEnd; i++) {
+    if (finalKlines[i] && finalKlines[i].high > baseHigh) {
+      baseHigh = finalKlines[i].high;
+    }
+  }
+  
+  // If no high found, default to 52W high
+  if (baseHigh === -Infinity) baseHigh = high52Week;
+
+  let calculatedPivot = baseHigh;
+  // Specific adjustments for patterns (but based on actual baseHigh)
   if (profile === "vcp-tight") {
     pattern = "VCP 3T 核心收斂";
     vcpPhaseDesc = "3 段收縮，振幅顯著壓縮，成交量進入乾枯期 (Vol Dry-up)。";
-    calculatedPivot = Math.round(high52Week * 0.99 * 100) / 100;
+    calculatedPivot = baseHigh;
   } else if (profile === "forming-vcp") {
     pattern = "VCP 二段成形中";
     vcpPhaseDesc = "正進行第 2 段震盪收縮，結構尚未完全收緊，右側量能仍待沉澱。";
-    calculatedPivot = Math.round(high52Week * 0.97 * 100) / 100;
+    calculatedPivot = baseHigh;
   } else if (profile === "breakout") {
     pattern = "VCP 爆量突破";
     vcpPhaseDesc = "收斂完成，伴隨大於平均量能強勢突破 Pivot 壓力區。";
-    calculatedPivot = Math.round(high52Week * 0.95 * 100) / 100;
+    calculatedPivot = baseHigh;
   } else if (profile === "flat-base") {
     pattern = "高檔箱型收斂";
     vcpPhaseDesc = "箱型基底 (Flat Base)，價格於狹幅區間平緩整理，成交量溫和萎縮。";
-    calculatedPivot = Math.round(high52Week * 1.01 * 100) / 100;
+    calculatedPivot = baseHigh;
   } else if (profile === "overextended") {
     pattern = "高檔延伸超買";
     vcpPhaseDesc = "無收斂型態。50 日均線乖離高，呈陡峭噴出走勢，累計量能極大。";
-    calculatedPivot = Math.round(high52Week * 1.02 * 100) / 100;
+    calculatedPivot = high52Week; // For overextended, 52W high is the natural resistance
   } else if (profile === "downtrend") {
     pattern = "頭部成形空頭排列";
     vcpPhaseDesc = "均線群下行，收盤價持續低於 200MA，無多頭收斂特徵。";
@@ -488,9 +510,9 @@ function computeStockAnalysis(
   const isBelow200MA = ma200 !== null && lastClose < ma200;
   const isBelow50MA = ma50 !== null && lastClose < ma50;
   const isBelowBaseLow = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.92;
-  const patternFailed = profile === 'downtrend' || (!passed && previousAnalysis?.statusEn !== 'Breakout');
-  const wasBreakout = previousAnalysis?.statusEn === 'Breakout';
-  const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout && lastClose > previousAnalysis.buyPoint * 1.08;
+  const patternFailed = profile === 'downtrend' || (!passed && previousAnalysis?.statusEn !== 'Breakout' && previousAnalysis?.statusEn !== 'Pullback');
+  const wasBreakout = previousAnalysis?.statusEn === 'Breakout' || previousAnalysis?.statusEn === 'Pullback';
+  const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout && lastClose > previousAnalysis.buyPoint * 1.15;
   
   const mustReset = isBelow200MA || isBelow50MA || isBelowBaseLow || patternFailed || isNewBasePattern;
   
@@ -498,44 +520,57 @@ function computeStockAnalysis(
       pivotPrice = previousAnalysis.buyPoint;
       originalPivot = previousAnalysis.originalPivot || previousAnalysis.buyPoint;
       pivotCreationDate = previousAnalysis.pivotCreationDate || pivotCreationDate;
-      pivotStatus = previousAnalysis.statusEn === 'Breakout' ? 'Breakout' : 'Fixed';
+      maxSinceBreakout = Math.max(previousAnalysis.maxSinceBreakout || pivotPrice, lastClose);
+      
+      // Determine Status from previous state + current price action
+      if (lastClose >= pivotPrice) {
+          // Check for Pullback condition
+          const pullbackPct = (maxSinceBreakout - lastClose) / maxSinceBreakout;
+          if (pullbackPct >= 0.03 && lastClose >= pivotPrice) {
+              pivotStatus = 'Pullback';
+          } else {
+              pivotStatus = 'Breakout';
+          }
+      } else {
+          pivotStatus = 'Fixed';
+      }
       isNewBase = false;
   } else {
       pivotPrice = calculatedPivot;
       originalPivot = calculatedPivot;
       pivotCreationDate = new Date().toISOString().split('T')[0];
       pivotStatus = 'Active';
+      maxSinceBreakout = lastClose;
       isNewBase = true;
   }
   
   let stopLoss = 0;
   let buyPoint = pivotPrice;
-  let status: "接近買點" | "可觀察" | "已突破" | "型態尚未完成" | "過度延伸，不建議追" | "不符合" = "可觀察";
+  let status: "接近買點" | "可觀察" | "已突破" | "型態尚未完成" | "過度延伸，不建議追" | "不符合" | "突破回撤" = "可觀察";
   let statusEn = "Watch";
   let suggestion = "";
   
-  // MANDATORY: If Trend Template fails, it MUST NOT be given a positive status
+  // Status Assignment
   if (!passed) {
     status = "不符合";
     statusEn = "Non-compliant";
     suggestion = "目前不符趨勢樣板。股價可能回落至均線下方或大趨勢不連貫，交易者應耐心等待其重新站回關鍵水位。";
     stopLoss = Math.round(lastClose * 0.88 * 100) / 100;
-  } else if (profile === "vcp-tight") {
-    if (lastClose >= pivotPrice * 0.96 && lastClose <= pivotPrice * 1.05) {
-      status = "接近買點";
-      statusEn = "Near Pivot";
-      suggestion = "股價處於合理突破前夕。建議分批布局，或等待確定性帶量突破 Pivot 買點時加碼。";
-    } else {
-      status = "可觀察";
-      statusEn = "Watch";
-      suggestion = "型態極為優異，距離 Pivot 臨界點尚有空間，列為首要追蹤名單。";
-    }
-    stopLoss = Math.round(pivotPrice * 0.945 * 100) / 100;
-  } else if (profile === "breakout") {
+  } else if (pivotStatus === 'Pullback') {
+    status = "突破回撤";
+    statusEn = "Pullback";
+    suggestion = "已完成突破後的回測。股價目前處於良性拉回中（較高點拉回逾3%且守住 Pivot），若縮量止跌是極佳的二次上車機會。";
+    stopLoss = Math.round(pivotPrice * 0.95 * 100) / 100;
+  } else if (profile === "breakout" || pivotStatus === 'Breakout') {
     status = "已突破";
     statusEn = "Breakout";
     suggestion = "強勢突破 Pivot！股價目前落於突破區間上方，仍屬合理買入區 (Pivot +5% 內)。";
     stopLoss = Math.round(pivotPrice * 0.94 * 100) / 100;
+  } else if (profile === "vcp-tight" || (lastClose >= pivotPrice * 0.96 && lastClose <= pivotPrice * 1.05)) {
+    status = "接近買點";
+    statusEn = "Near Pivot";
+    suggestion = "股價處於合理突破前夕。建議分批布局，或等待確定性帶量突破 Pivot 買點時加碼。";
+    stopLoss = Math.round(pivotPrice * 0.945 * 100) / 100;
   } else if (profile === "forming-vcp") {
     status = "型態尚未完成";
     statusEn = "Pattern Forming";
@@ -557,6 +592,7 @@ function computeStockAnalysis(
     suggestion = "不符強勢股多頭排列。此股目前處於空頭或紊亂整理，極不建議操作。";
     stopLoss = Math.round(lastClose * 0.88 * 100) / 100;
   }
+
   
   const riskPercent = Math.max(2, Math.round(((buyPoint - stopLoss) / buyPoint) * 10000) / 100);
   const targetPrice1 = Math.round(buyPoint * (1 + (riskPercent * 2) / 100) * 100) / 100;
@@ -639,6 +675,7 @@ function computeStockAnalysis(
     originalPivot,
     pivotCreationDate,
     pivotStatus,
+    maxSinceBreakout,
     isNewBase,
     stopLoss,
     targetPrice1,

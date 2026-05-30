@@ -632,6 +632,8 @@ export default function App() {
         return <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold rounded-md">接近買點</span>;
       case "已突破":
         return <span className="px-2 py-1 bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 text-[11px] font-bold rounded-md">已突破</span>;
+      case "突破回撤":
+        return <span className="px-2 py-1 bg-teal-500/15 text-teal-400 border border-teal-500/30 text-[11px] font-bold rounded-md">突破回撤</span>;
       case "可觀察":
         return <span className="px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[11px] font-bold rounded-md">可觀察</span>;
       case "過度延伸，不建議追":
