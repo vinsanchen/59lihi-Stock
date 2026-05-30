@@ -71,10 +71,9 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
     }
   };
 
-  const maxRevenueYoY = Math.max(...data.revenueList.map(r => Math.abs(r.yoy || 0)), 20);
+  const maxRevenueYoY = Math.max(...data.revenueList.map(r => Math.abs(r.yoy || 0)), 50);
 
   const formatDate = (dateStr: string) => {
-    // Format: 2024-05-01 -> 24/05
     try {
         const parts = dateStr.split('-');
         if (parts.length >= 2) {
@@ -87,10 +86,10 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in py-4">
+    <div className="space-y-6 animate-fade-in py-6">
       <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
         <Layers className="w-5 h-5 text-indigo-400" />
-        <h3 className="text-lg font-black text-white tracking-tight">【基本面分析】Fundamental Matrix</h3>
+        <h3 className="text-xl font-black text-white tracking-tight">【基本面分析】Fundamental Matrix</h3>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -139,21 +138,25 @@ export default function FundamentalAnalysis({ data, loading }: Props) {
                 </div>
             </div>
 
-            <div className="h-[130px] flex items-end justify-between gap-1 px-1 pt-4">
+            {/* Increased height and fixed scaling */}
+            <div className="h-[200px] flex items-end justify-between gap-1 px-1 pt-4 relative border-b border-slate-800 pb-12">
                 {data.revenueList.slice(0, 12).reverse().map((rev, i) => {
                     const absYoY = Math.abs(rev.yoy || 0);
-                    const heightPercent = (absYoY / maxRevenueYoY) * 100;
+                    // Percentage of parent container
+                    const heightPercent = Math.min(100, Math.max(5, (absYoY / maxRevenueYoY) * 100));
                     
                     return (
-                        <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group relative">
-                            <div className="absolute bottom-full mb-1 bg-black text-[9px] px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 border border-slate-700">
+                        <div key={i} className="flex-1 h-full flex flex-col justify-end items-center group relative">
+                            <div className="absolute bottom-full mb-1 bg-black text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20 border border-slate-700 font-mono font-bold">
                                 {rev.yoy >= 0 ? "+" : ""}{rev.yoy}%
                             </div>
                             <div 
-                                className={`w-full rounded-t-sm transition-all duration-300 ${rev.yoy >= 50 ? "bg-emerald-500" : rev.yoy >= 25 ? "bg-emerald-500/60" : rev.yoy >= 0 ? "bg-emerald-500/30" : "bg-rose-500/40"}`}
-                                style={{ height: `${Math.max(4, heightPercent)}%` }}
+                                className={`w-full rounded-t-sm transition-all duration-300 ${rev.yoy >= 50 ? "bg-emerald-500 shadow-sm" : rev.yoy >= 25 ? "bg-emerald-500/60" : rev.yoy >= 0 ? "bg-emerald-500/30" : "bg-rose-500/40"}`}
+                                style={{ height: `${heightPercent}%` }}
                             ></div>
-                            <span className="text-[7px] font-mono font-bold text-gray-600 scale-90 rotate-[-45deg] origin-top-left mt-2">{formatDate(rev.period)}</span>
+                            <span className="absolute top-[100%] mt-2 text-[8px] font-mono font-bold text-gray-500 rotate-[-45deg] origin-top-left whitespace-nowrap">
+                                {formatDate(rev.period)}
+                            </span>
                         </div>
                     );
                 })}
