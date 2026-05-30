@@ -64,11 +64,15 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
     const isBelowMA50 = ma50 ? lastClose < ma50 : false;
     const isBelowStopLoss = lastClose < stopLoss;
     const isBelowPivot = buyPoint > 0 ? lastClose < buyPoint : false;
+    const isOverextended = stock.status === "過度延伸，不建議追";
 
     if (isBelowStopLoss || isBelowPivot || isBelowMA50) {
         strategy = 'exit';
-    } else if (perfSinceBreakout >= 20 && perfSinceBreakout <= 25 && !reached20PercentIn3Weeks) {
+    } else if (isOverextended || (perfSinceBreakout >= 20 && perfSinceBreakout <= 25 && !reached20PercentIn3Weeks)) {
+        // Overextended status or normal 20-25% target profit reached
         strategy = 'reduce';
+    } else {
+        strategy = 'hold';
     }
 
     return {
@@ -80,7 +84,10 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
     };
   }, [stock, klines, pivotCreationDate, lastClose, buyPoint, stopLoss, ma50]);
 
-  // Remove the if (!stats) return null; check
+  // Only show holding management if the stock is actually in a breakout/post-breakout state
+  const isBreakoutActive = stock.status === "已突破" || stock.status === "突破回撤" || (stock.status === "過度延伸，不建議追" && stock.pivotStatus === "Breakout");
+  
+  if (!isBreakoutActive) return null;
 
   return (
     <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-5 shadow-sm space-y-6">
@@ -182,7 +189,7 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
         <div className="text-right hidden sm:block">
             <p className="text-[10px] text-gray-500 leading-tight max-w-[200px]">
                 {stats.strategy === 'hold' ? "目前價格仍在 Pivot、50MA 及停損點之上，趨勢健康。" :
-                 stats.strategy === 'reduce' ? "已進入 20%-25% 獲利滿足區，且非 8週超強勢股，建議落袋為安。" :
+                 stats.strategy === 'reduce' ? (stock.status === "過度延伸，不建議追" ? "股價已大幅偏離均線與 Pivot（過度延伸），建議分批獲利了結並收緊移動停利。" : "已進入 20%-25% 獲利滿足區，且非 8週超強勢股，建議落袋為安。") :
                  "已觸發賣出條件（跌破 Pivot、50MA 或停損點），請依紀律執行交易。"}
             </p>
         </div>
