@@ -41,6 +41,7 @@ import SepaScores from "./components/SepaScores";
 import TrendTemplateCheck from "./components/TrendTemplateCheck";
 import FundamentalAnalysis from "./components/FundamentalAnalysis";
 import IndustryManager from "./components/IndustryManager";
+import SuperPerformanceManagement from "./components/SuperPerformanceManagement";
 
 // Legendary Mark Minervini principles to rotate
 const MINERVINI_QUOTES = [
@@ -2046,62 +2047,68 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Right card: Gemini AI Smart Commentary (5 cols) */}
-                <div className="md:col-span-5 bg-[#161B22] border border-[#30363D] rounded-xl p-5 shadow-sm flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-                      <div>
-                        <h4 className="font-sans font-bold text-gray-100 flex items-center gap-2">
-                          <Flame className="w-4 h-4 text-amber-500 fill-amber-500" />
-                          Gemini 戰術大師即時點評
-                        </h4>
-                        <p className="text-gray-500 text-xs mt-0.5">調用大師思維邏輯對當前個股籌碼、形态进行剖析</p>
+                {/* Right col: Stack cards (5 cols) */}
+                <div className="md:col-span-5 flex flex-col gap-6">
+                  {/* Gemini AI Smart Commentary */}
+                  <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-5 shadow-sm flex flex-col justify-between">
+                    <div className="space-y-4">
+                      <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                        <div>
+                          <h4 className="font-sans font-bold text-gray-100 flex items-center gap-2">
+                            <Flame className="w-4 h-4 text-amber-500 fill-amber-500" />
+                            Gemini 戰術大師即時點評
+                          </h4>
+                          <p className="text-gray-500 text-xs mt-0.5">調用大師思維邏輯對當前個股籌碼、形态进行剖析</p>
+                        </div>
+
+                        {/* Spark element helper */}
+                        <span className="font-mono text-[9px] bg-slate-950 px-1.5 py-0.5 rounded border border-[#30363D] text-gray-500 font-bold uppercase tracking-wider select-none">Proxy AI</span>
                       </div>
 
-                      {/* Spark element helper */}
-                      <span className="font-mono text-[9px] bg-slate-950 px-1.5 py-0.5 rounded border border-[#30363D] text-gray-500 font-bold uppercase tracking-wider select-none">Proxy AI</span>
-                    </div>
-
-                    {/* Commentary body content */}
-                    <div className="bg-slate-950 rounded-xl p-4 border border-slate-900 min-h-[220px] text-xs leading-relaxed max-h-[300px] overflow-y-auto font-sans">
-                      {aiReportCache[activeStock.ticker] ? (
-                        <div className="whitespace-pre-wrap text-gray-300 font-sans space-y-2">
-                          {aiReportCache[activeStock.ticker].split("\n").map((line, idx) => {
-                            if (line.startsWith("###")) {
-                              return <h5 key={idx} className="font-bold text-gray-100 text-sm mt-3 mb-1 first:mt-0 font-sans">{line.replace("###", "").trim()}</h5>;
-                            } else if (line.startsWith("**") && line.endsWith("**")) {
-                              return <strong key={idx} className="block text-indigo-400 text-xs mt-2 font-bold font-sans">{line.replace(/\*\*/g, "").trim()}</strong>;
-                            } else if (line.startsWith("-")) {
-                              return <li key={idx} className="ml-3 list-disc text-gray-300 pl-1 mt-1 font-sans">{line.replace("-", "").trim()}</li>;
-                            } else if (line.startsWith(">")) {
-                              return <blockquote key={idx} className="border-l-2 border-emerald-500 pl-2 italic text-emerald-400 my-2 font-sans">{line.replace(">", "").trim()}</blockquote>;
-                            }
-                            return <p key={idx} className="mt-1.5 first:mt-0 font-sans">{line}</p>;
-                          })}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-full text-center py-12 text-gray-550 space-y-4">
-                          <Lock className="w-8 h-8 text-slate-700 mx-auto" />
-                          <div className="space-y-1">
-                            <p className="font-bold text-gray-400">研析報告庫未啟用點評</p>
-                            <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 SEPA 大師級深度操盤研判</p>
+                      {/* Commentary body content */}
+                      <div className="bg-slate-950 rounded-xl p-4 border border-slate-900 min-h-[220px] text-xs leading-relaxed max-h-[300px] overflow-y-auto font-sans">
+                        {aiReportCache[activeStock.ticker] ? (
+                          <div className="whitespace-pre-wrap text-gray-300 font-sans space-y-2">
+                            {aiReportCache[activeStock.ticker].split("\n").map((line, idx) => {
+                              if (line.startsWith("###")) {
+                                return <h5 key={idx} className="font-bold text-gray-100 text-sm mt-3 mb-1 first:mt-0 font-sans">{line.replace("###", "").trim()}</h5>;
+                              } else if (line.startsWith("**") && line.endsWith("**")) {
+                                return <strong key={idx} className="block text-indigo-400 text-xs mt-2 font-bold font-sans">{line.replace(/\*\*/g, "").trim()}</strong>;
+                              } else if (line.startsWith("-")) {
+                                return <li key={idx} className="ml-3 list-disc text-gray-300 pl-1 mt-1 font-sans">{line.replace("-", "").trim()}</li>;
+                              } else if (line.startsWith(">")) {
+                                return <blockquote key={idx} className="border-l-2 border-emerald-500 pl-2 italic text-emerald-400 my-2 font-sans">{line.replace(">", "").trim()}</blockquote>;
+                              }
+                              return <p key={idx} className="mt-1.5 first:mt-0 font-sans">{line}</p>;
+                            })}
                           </div>
-                        </div>
-                      )}
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-center py-12 text-gray-550 space-y-4">
+                            <Lock className="w-8 h-8 text-slate-700 mx-auto" />
+                            <div className="space-y-1">
+                              <p className="font-bold text-gray-400">研析報告庫未啟用點評</p>
+                              <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 SEPA 大師級深度操盤研判</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Operational execution buttons */}
+                    <div className="pt-4 mt-4 border-t border-slate-800 flex justify-end">
+                      <button
+                        onClick={() => fetchAiAnalysis(activeStock)}
+                        disabled={aiLoading || (aiReportCache[activeStock.ticker] && aiReportCache[activeStock.ticker] !== "分析產生中，請稍候..." && aiReportCache[activeStock.ticker] !== "⚠️ 數據演算連線中斷。請點擊按鈕重試。")}
+                        className="w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 disabled:scale-100 text-white py-2 px-4 rounded-lg font-bold text-xs transition-all shadow-md select-none"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${aiLoading ? "animate-spin" : ""}`} />
+                        {aiLoading ? "Gemini 大師寫作中..." : aiReportCache[activeStock.ticker] ? "已生成大師專屬剖析" : "🚀 要求 Gemini 大師研判個股"}
+                      </button>
                     </div>
                   </div>
 
-                  {/* Operational execution buttons */}
-                  <div className="pt-4 mt-4 border-t border-slate-800 flex justify-end">
-                    <button
-                      onClick={() => fetchAiAnalysis(activeStock)}
-                      disabled={aiLoading || (aiReportCache[activeStock.ticker] && aiReportCache[activeStock.ticker] !== "分析產生中，請稍候..." && aiReportCache[activeStock.ticker] !== "⚠️ 數據演算連線中斷。請點擊按鈕重試。")}
-                      className="w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 disabled:scale-100 text-white py-2 px-4 rounded-lg font-bold text-xs transition-all shadow-md select-none"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${aiLoading ? "animate-spin" : ""}`} />
-                      {aiLoading ? "Gemini 大師寫作中..." : aiReportCache[activeStock.ticker] ? "已生成大師專屬剖析" : "🚀 要求 Gemini 大師研判個股"}
-                    </button>
-                  </div>
+                  {/* Super Performance Holding Management Card */}
+                  <SuperPerformanceManagement stock={activeStock} klines={activeKlines} />
                 </div>
               </div>
             </>
