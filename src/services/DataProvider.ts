@@ -115,6 +115,18 @@ export class DataProvider {
     return stock;
   }
 
+  public static async fetchStockDetails(ticker: string): Promise<StockAnalysis | null> {
+    try {
+      const res = await fetch(`/api/stock-search/${ticker}`);
+      if (!res.ok) return null;
+      const stock = await res.json();
+      return this.recalculateScore(stock);
+    } catch (err) {
+      console.error("[DataProvider] Deep search failed:", err);
+      return null;
+    }
+  }
+
   public static async fetchKlines(ticker: string): Promise<KLine[]> {
     try {
       const res = await fetch(`/api/stock-klines/${ticker}`);

@@ -143,6 +143,8 @@ export default function App() {
   // Gemini AI detailed Analysis cache
   const [aiReportCache, setAiReportCache] = useState<{ [ticker: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
+  const [deepSearchTicker, setDeepSearchTicker] = useState("");
+  const [deepSearching, setDeepSearching] = useState(false);
 
   // Fundamental data cache
   const [fundamentalCache, setFundamentalCache] = useState<{ [ticker: string]: any }>({});
@@ -262,6 +264,37 @@ export default function App() {
       console.error("[Frontend] Force rescan failed:", e);
       setError(e.message || "市場資料同步失敗，請檢查資料來源。");
       setRefreshing(false);
+    }
+  };
+
+  const handleDeepSearch = async () => {
+    if (!deepSearchTicker) return;
+    setDeepSearching(true);
+    setError(null);
+    try {
+      const stock = await DataProvider.fetchStockDetails(deepSearchTicker);
+      if (stock) {
+        // If it's a new stock, add it temporarily to the relevant list so user can see it
+        if (stock.country === "TW") {
+          setTwStocks(prev => {
+            if (prev.find(s => s.ticker === stock.ticker)) return prev;
+            return [stock, ...prev];
+          });
+        } else {
+          setUsStocks(prev => {
+            if (prev.find(s => s.ticker === stock.ticker)) return prev;
+            return [stock, ...prev];
+          });
+        }
+        setSelectedTicker(stock.ticker);
+        setDeepSearchTicker("");
+      } else {
+        setError(`無法找到或分析代號: ${deepSearchTicker}。請確保代號正確（例: 2330.TW 或 NVDA）。`);
+      }
+    } catch (e: any) {
+      setError(e.message || "搜尋分析失敗");
+    } finally {
+      setDeepSearching(false);
     }
   };
 
@@ -1852,14 +1885,25 @@ export default function App() {
 
                 {/* Direct text lookup switcher input */}
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-none font-semibold text-gray-400 hidden sm:inline">自訂代碼查詢:</label>
-                  <input
-                    type="text"
-                    value={selectedTicker}
-                    onChange={(e) => setSelectedTicker(e.target.value.toUpperCase())}
-                    placeholder="例如: 2330.TW 或 NVDA"
-                    className="bg-black border border-[#30363D] rounded-lg text-xs py-1.5 px-3 w-36 text-center font-mono font-bold tracking-widest text-[#a5b4fc] placeholder-gray-600 outline-none focus:border-indigo-500"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={deepSearchTicker}
+                      onChange={(e) => setDeepSearchTicker(e.target.value.toUpperCase())}
+                      onKeyDown={(e) => e.key === "Enter" && handleDeepSearch()}
+                      placeholder="搜尋代號 (例: 2330.TW 或 NVDA)"
+                      className="bg-black border border-[#30363D] rounded-lg text-xs py-1.5 px-3 pl-8 w-48 font-mono font-bold tracking-widest text-[#a5b4fc] placeholder-gray-600 outline-none focus:border-indigo-500"
+                    />
+                    <Search className="w-3 h-3 text-gray-500 absolute left-2.5 top-2.5" />
+                  </div>
+                  <button
+                    onClick={handleDeepSearch}
+                    disabled={deepSearching || !deepSearchTicker}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
+                  >
+                    {deepSearching ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    <span>深度分析</span>
+                  </button>
                 </div>
               </div>
 

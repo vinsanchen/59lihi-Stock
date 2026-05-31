@@ -197,8 +197,8 @@ function determineDynamicWatchlistCategory(stock: any, consecutiveDays: number):
   const lastClose = stock.lastClose;
   const buyPoint = stock.buyPoint;
 
-  // 1. 今日突破 (Breakout Today)
-  if (stock.statusEn === 'Breakout') {
+  // 1. 今日突破 (Breakout Today) - Now requires recent breakout check
+  if (stock.statusEn === 'Breakout' && consecutiveDays <= 3) {
      return { cat: "今日突破", catEn: "Breakout Today" };
   }
 
@@ -217,16 +217,12 @@ function determineDynamicWatchlistCategory(stock: any, consecutiveDays: number):
      return { cat: "過度延伸", catEn: "Extended" };
   }
 
-  // 5. 核心觀察股 (Core Watchlist)
-  if (consecutiveDays >= 2 || (stock.rsRanking >= 80 && stock.statusEn === 'Watch') || (stock.statusEn === 'Watch' && stock.sepaScore?.total >= 85)) {
+  // 5. 核心觀察股 (Core Watchlist) - Raised bar to 4 days of quality trend
+  if (consecutiveDays >= 4 || (stock.rsRanking >= 85 && stock.statusEn === 'Watch' && consecutiveDays >= 2)) {
     return { cat: "核心觀察股", catEn: "Core Watchlist" };
   }
 
   // 6. 一般追蹤
-  if (stock.statusEn === 'Watch') {
-    return { cat: "一般追蹤", catEn: "Regular Watch" };
-  }
-
   return { cat: "一般追蹤", catEn: "Regular Watch" };
 }
 
@@ -509,7 +505,7 @@ function computeStockAnalysis(
   // Pivot locking logic - RESET ONLY on specific conditions
   const isBelow200MA = ma200 !== null && lastClose < ma200;
   const isBelow50MA = ma50 !== null && lastClose < ma50;
-  const isBelowBaseLow = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.92;
+  const isBelowBaseLow = previousAnalysis?.buyPoint && lastClose < previousAnalysis.buyPoint * 0.91; // Slightly looser for noise
   const patternFailed = profile === 'downtrend' || (!passed && previousAnalysis?.statusEn !== 'Breakout' && previousAnalysis?.statusEn !== 'Pullback');
   const wasBreakout = previousAnalysis?.statusEn === 'Breakout' || previousAnalysis?.statusEn === 'Pullback';
   const isNewBasePattern = (profile === 'flat-base' || profile === 'forming-vcp' || profile === 'vcp-tight') && wasBreakout && lastClose > previousAnalysis.buyPoint * 1.15;
@@ -523,7 +519,12 @@ function computeStockAnalysis(
       maxSinceBreakout = Math.max(previousAnalysis.maxSinceBreakout || pivotPrice, lastClose);
       
       // Determine Status from previous state + current price action
-      if (lastClose >= pivotPrice) {
+      // Reverting to price-based breakout to ensure immediate detection in the observation pool
+      const isCurrentlyAbove = lastClose >= pivotPrice;
+      const isHighConviction = isCurrentlyAbove && (volume > avgVolume20 * 1.25 || lastClose > yesterdayClose * 1.025);
+      const stayingAbove = wasBreakout && isCurrentlyAbove && lastClose > pivotPrice * 0.985; // Allow minor noise for existing breakouts
+
+      if (isCurrentlyAbove || (wasBreakout && stayingAbove)) {
           // Check for Pullback condition
           const pullbackPct = (maxSinceBreakout - lastClose) / maxSinceBreakout;
           if (pullbackPct >= 0.03 && lastClose >= pivotPrice) {
@@ -532,6 +533,7 @@ function computeStockAnalysis(
               pivotStatus = 'Breakout';
           }
       } else {
+          // If below, it's back to Fixed (Watch)
           pivotStatus = 'Fixed';
       }
       isNewBase = false;
@@ -550,21 +552,32 @@ function computeStockAnalysis(
   let statusEn = "Watch";
   let suggestion = "";
   
-  // Status Assignment
+  // Status Assignment - Reordered for safety: Overextended check before Breakout
   if (!passed) {
     status = "不符合";
     statusEn = "Non-compliant";
     suggestion = "目前不符趨勢樣板。股價可能回落至均線下方或大趨勢不連貫，交易者應耐心等待其重新站回關鍵水位。";
     stopLoss = Math.round(lastClose * 0.88 * 100) / 100;
+  } else if (profile === "overextended" || lastClose > pivotPrice * 1.12) {
+    status = "過度延伸，不建議追";
+    statusEn = "Overextended";
+    suggestion = "短期漲幅極度延伸，回檔修正與假突破風險極高，此時建倉風險極大。應待其構築新底。";
+    stopLoss = Math.round(lastClose * 0.90 * 100) / 100;
   } else if (pivotStatus === 'Pullback') {
     status = "突破回撤";
     statusEn = "Pullback";
     suggestion = "已完成突破後的回測。股價目前處於良性拉回中（較高點拉回逾3%且守住 Pivot），若縮量止跌是極佳的二次上車機會。";
     stopLoss = Math.round(pivotPrice * 0.95 * 100) / 100;
-  } else if (profile === "breakout" || pivotStatus === 'Breakout') {
+  } else if (pivotStatus === 'Breakout') {
     status = "已突破";
     statusEn = "Breakout";
-    suggestion = "強勢突破 Pivot！股價目前落於突破區間上方，仍屬合理買入區 (Pivot +5% 內)。";
+    const dist = ((lastClose - pivotPrice) / pivotPrice) * 100;
+    if (dist > 5) {
+      status = "已突破 (稍遠)";
+      suggestion = "已突破 Pivot 約 " + dist.toFixed(1) + "%。雖然趨勢強勁，但已超越最佳買點 5%，建議控制位階，不宜大舉重倉。";
+    } else {
+      suggestion = "強勢突破 Pivot！股價目前落於突破區間上方，仍屬合理買入區 (Pivot +5% 內)。";
+    }
     stopLoss = Math.round(pivotPrice * 0.94 * 100) / 100;
   } else if (profile === "vcp-tight" || (lastClose >= pivotPrice * 0.96 && lastClose <= pivotPrice * 1.05)) {
     status = "接近買點";
@@ -581,11 +594,6 @@ function computeStockAnalysis(
     statusEn = "Watch";
     suggestion = "高檔狹幅整理，等待箱頂壓力帶量突破。突破時可積極參與。";
     stopLoss = Math.round(lastClose * 0.94 * 100) / 100;
-  } else if (profile === "overextended") {
-    status = "過度延伸，不建議追";
-    statusEn = "Overextended";
-    suggestion = "短期漲幅極度延伸，回檔修正與假突破風險極高，此時建倉風險極大。應待其構築新底。";
-    stopLoss = Math.round(lastClose * 0.90 * 100) / 100;
   } else {
     status = "不符合";
     statusEn = "Non-compliant";
@@ -693,22 +701,70 @@ function computeStockAnalysis(
   };
 }
 
+// Global lock to ensure only one Yahoo request happens at a time across all tasks
+let yahooLockPromise: Promise<void> | null = null;
+
 // Scrapes a ticker from Yahoo Finance Chart API with auto-fallback and rotation
-async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true, isPriority = false): Promise<any> {
-  if (Date.now() < yahooRateLimitUntil && !isPriority) {
+async function getYahooChartData(ticker: string, retries = 2, useQuery2 = true, isPriority = false): Promise<any> {
+  // Use global lock to serialize Yahoo requests
+  while (yahooLockPromise) {
+    await yahooLockPromise;
+  }
+  
+  let release: () => void = () => {};
+  yahooLockPromise = new Promise(resolve => { release = resolve; });
+
+  try {
+    if (Date.now() < yahooRateLimitUntil && !isPriority) {
+      release();
+      yahooLockPromise = null;
+      return null;
+    }
+
+    const json = await performYahooRequest(ticker, useQuery2, isPriority);
+    
+    // Success - add a small delay before releasing the lock to avoid "burst" 429s
+    await new Promise(r => setTimeout(r, 1500));
+    release();
+    yahooLockPromise = null;
+    return json;
+  } catch (err: any) {
+    release();
+    yahooLockPromise = null;
+    
+    const reason = err.message || "unknown error";
+    const isIndex = ticker.startsWith("^");
+    
+    if (reason.includes("rate limit") || reason.includes("API blocked")) {
+      const wait = isPriority ? 15000 : 30000;
+      console.warn(`[Yahoo Rate Limit] engages ${wait/1000}s cooldown for ${ticker}`);
+      yahooRateLimitUntil = Date.now() + wait;
+    }
+
+    if (retries > 0) {
+      const waitTime = (isIndex || isPriority ? 8000 : 15000) * (3 - retries);
+      console.log(`[Yahoo Retry] ${ticker} retrying in ${waitTime}ms... (${retries} left)`);
+      await new Promise(r => setTimeout(r, waitTime));
+      return getYahooChartData(ticker, retries - 1, !useQuery2, isPriority);
+    }
+    
+    if (isPriority) {
+        console.error(`[Yahoo Scraper Final Failure] ${ticker}: ${reason}`);
+    }
     return null;
   }
+}
+
+async function performYahooRequest(ticker: string, useQuery2: boolean, isPriority: boolean): Promise<any> {
   const subdomain = useQuery2 ? "query2" : "query1";
   const url = `https://${subdomain}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
-  console.log(`[API Request URL] ${url}`);
   
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 6000); // 6 seconds timeout
+  const id = setTimeout(() => controller.abort(), 10000); 
   
   const agents = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
   ];
   const userAgent = agents[Math.floor(Math.random() * agents.length)];
@@ -717,75 +773,26 @@ async function getYahooChartData(ticker: string, retries = 1, useQuery2 = true, 
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": userAgent
-        // NOTE: Absolute minimal headers. Do not send "Accept" or "Accept-Language" 
-        // as Yahoo Finance blocks/429s those on cloud hosting environments.
+        "User-Agent": userAgent,
+        "Accept": "*/*",
+        "Connection": "keep-alive"
       }
     });
     clearTimeout(id);
     
     if (!res.ok) {
-      if (res.status === 429) {
-        throw new Error("rate limit: Too many requests for Yahoo Finance");
-      }
-      if (res.status === 403) {
-        throw new Error("API blocked: Forbidden bypass access");
-      }
-      throw new Error(`parsing error or server status: HTTP ${res.status}`);
+      if (res.status === 429) throw new Error("rate limit");
+      if (res.status === 403) throw new Error("API blocked");
+      throw new Error(`HTTP ${res.status}`);
     }
     
-    const json: any = await res.json();
-    console.log(`[API Response] Received successful data payload for ${ticker} from ${subdomain}`);
-    return json;
+    return await res.json();
   } catch (err: any) {
     clearTimeout(id);
-    const now = Date.now();
-    
-    let reason = "parsing error";
-    if (err.name === 'AbortError') {
-      reason = "request timeout";
-    } else if (err.message?.includes("CORS")) {
-      reason = "CORS";
-    } else if (err.message?.includes("blocked")) {
-      reason = "API blocked";
-    } else if (err.message?.includes("rate limit")) {
-      reason = "rate limit";
-    }
-    
-    const isIndex = ticker.startsWith("^");
-    if (!isIndex) {
-      const isRateLimited = reason === "rate limit" || reason === "API blocked";
-      // Only log if it's a priority ticker OR it's not a rate limit (meaning it's an unexpected error)
-      if (isPriority) {
-        console.warn(`[Yahoo Scraper Warning] Ticker: ${ticker} failed on ${subdomain} (Reason: ${reason}).`);
-      } else if (isRateLimited && Date.now() >= yahooRateLimitUntil) {
-        // Log once briefly if first hit
-        console.warn(`[Yahoo Rate Limit Hit] Yahoo Finance hit rate limits. Engaging cooldown.`);
-      }
-    }
-    
-    if (reason === "rate limit" || reason === "API blocked") {
-      // Exponentially increase cooldown for global blocks
-      const currentCooldown = yahooRateLimitUntil - Date.now();
-      const nextCooldown = Math.min(20 * 60 * 1000, Math.max(5 * 60 * 1000, currentCooldown * 1.2)); 
-      yahooRateLimitUntil = Date.now() + nextCooldown;
-    }
-    
-    // For critical indices, prioritize retry with query1 
-    if (useQuery2) {
-      await new Promise(r => setTimeout(r, (isIndex || isPriority) ? 2000 : 1000));
-      return getYahooChartData(ticker, retries, false, isPriority);
-    }
-    
-    if (retries > 0) {
-      const waitTime = (isIndex || isPriority ? 5000 : 3000) * (2 - retries + 1);
-      console.log(`[Retrying] Ticker: ${ticker}, remaining retries: ${retries}, waiting ${waitTime}ms...`);
-      await new Promise(r => setTimeout(r, waitTime));
-      return getYahooChartData(ticker, retries - 1, true, isPriority);
-    }
-    return null;
+    throw err;
   }
 }
+
 
 // Extract klines list from raw JSON from Yahoo Finance
 function parseYahooKLines(json: any): any[] {
@@ -1271,7 +1278,7 @@ async function performMarketSync(): Promise<boolean> {
   // 2. Fetch full TWSE stock list
   twseStockList = await fetchTWSEList();
   
-  // 3. Define US stock universe for tracking
+  // 3. Define US stock universe for tracking - Expanded for better market coverage
   const usUniverse = [
     { ticker: "NVDA", name: "Nvidia" },
     { ticker: "TSLA", name: "Tesla" },
@@ -1292,7 +1299,20 @@ async function performMarketSync(): Promise<boolean> {
     { ticker: "NFLX", name: "Netflix" },
     { ticker: "ORCL", name: "Oracle" },
     { ticker: "ADBE", name: "Adobe" },
-    { ticker: "CRM", name: "Salesforce" }
+    { ticker: "CRM", name: "Salesforce" },
+    { ticker: "QCOM", name: "Qualcomm" },
+    { ticker: "TXN", name: "Texas Instruments" },
+    { ticker: "INTC", name: "Intel" },
+    { ticker: "NOW", name: "ServiceNow" },
+    { ticker: "UBER", name: "Uber" },
+    { ticker: "ABNB", name: "Airbnb" },
+    { ticker: "NET", name: "Cloudflare" },
+    { ticker: "SNOW", name: "Snowflake" },
+    { ticker: "MDB", name: "MongoDB" },
+    { ticker: "DDOG", name: "Datadog" },
+    { ticker: "ZS", name: "Zscaler" },
+    { ticker: "CRWD", name: "CrowdStrike" },
+    { ticker: "PANW", name: "Palo Alto" }
   ];
 
   const finalTwList: any[] = [];
@@ -1342,19 +1362,13 @@ async function performMarketSync(): Promise<boolean> {
   // Priority handle for leaders
   const priorityTickers = ["2330", "2317", "2454", "2308", "2382", "2357", "3231", "6669", "2337", "2344", "2356", "2376", "2301", "2313", "2368", "3034", "3037"];
   
-  // Fetch priority tickers first for high reliability - concurrent
+  // Fetch priority tickers first for high reliability - sequential to respect rate limits
   console.log(`[Market Sync] Priority fetch phase starting for ${priorityTickers.length} leaders...`);
-  const priorityStocks = twseStockList.filter(s => priorityTickers.includes(s.ticker));
+  const priorityStocksList = twseStockList.filter(s => priorityTickers.includes(s.ticker));
   const remainingStocks = twseStockList.filter(s => !priorityTickers.includes(s.ticker));
-
-  const priorityResults = await Promise.all(priorityStocks.map(async (item) => {
-    // Staggered starts for priority
-    await new Promise(r => setTimeout(r, Math.random() * 400));
+ 
+  for (const item of priorityStocksList) {
     const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-    return { item, klines };
-  }));
-
-  for (const { item, klines } of priorityResults) {
     if (klines && klines.length >= 150) {
       const last = klines[klines.length - 1].close;
       const getReturn = (days: number) => {
@@ -1369,7 +1383,6 @@ async function performMarketSync(): Promise<boolean> {
       console.warn(`[Market Sync Priority Warning] Ticker ${item.ticker} (${item.name}) failed fetch in priority phase.`);
     }
   }
-
   // Update cache immediately after priority phase so user sees results right away
   if (finalTwList.length > 0) {
     console.log(`[Market Sync] Priority phase complete (${finalTwList.length} stocks). Updating intermediate cache.`);
@@ -1415,38 +1428,31 @@ async function performMarketSync(): Promise<boolean> {
       taiex: taiexInfo || marketDataCache?.taiex || { price: 0, changePercent: 0, date: "" },
       nasdaq: nasdaqInfo || marketDataCache?.nasdaq || { price: 0, changePercent: 0, date: "" },
       twStocks: tempResults.filter(Boolean),
-      usStocks: [],
+      usStocks: finalUsList, // Correctly include the US stocks already scanned
       stockPoolCount: twseStockList.length
     };
   }
 
-  const chunkSize = 1; // Serialize for rate limit safety
+  const chunkSize = 1; // Strict serial for rate safety
   for (let i = 0; i < remainingStocks.length; i += chunkSize) {
     const chunk = remainingStocks.slice(i, i + chunkSize);
-    const results = await Promise.all(chunk.map(async (item) => {
-      // Significantly increase pacing: ~3-6 seconds per request
-      await new Promise(r => setTimeout(r, Math.random() * 3000 + 3000));
-      const { klines } = await fetchStockKLines(item.ticker, true, item.name);
-      return { item, klines };
-    }));
-
     let chunkFailures = 0;
-    for (const { item, klines } of results) {
-      if (!klines || klines.length < 150) {
+    
+    for (const item of chunk) {
+      const { klines } = await fetchStockKLines(item.ticker, true, item.name);
+      if (klines && klines.length >= 150) {
+        const last = klines[klines.length - 1].close;
+        const getReturn = (days: number) => {
+          if (klines.length <= days) return 0;
+          const prev = klines[klines.length - days].close;
+          return (last - prev) / prev;
+        };
+        const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
+        rsScoreMap[item.ticker] = rsScore;
+        finalTwList.push({ ...item, klines });
+      } else {
         chunkFailures++;
-        continue;
       }
-      
-      const last = klines[klines.length - 1].close;
-      const getReturn = (days: number) => {
-        if (klines.length <= days) return 0;
-        const prev = klines[klines.length - days].close;
-        return (last - prev) / prev;
-      };
-      
-      const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
-      rsScoreMap[item.ticker] = rsScore;
-      finalTwList.push({ ...item, klines });
     }
     
     // If whole chunk failed, pause briefly
@@ -2080,6 +2086,29 @@ app.get("/api/stock-klines/:ticker", async (req, res) => {
   }
 });
 
+app.get("/api/stock-search/:ticker", async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const cleanTicker = ticker.toUpperCase();
+    if (!marketDataCache) loadCacheFromFile();
+    
+    let stock = marketDataCache?.twStocks.find(s => s.ticker.toUpperCase() === cleanTicker || s.ticker.split('.')[0].toUpperCase() === cleanTicker) || 
+                marketDataCache?.usStocks.find(s => s.ticker.toUpperCase() === cleanTicker);
+    
+    if (stock) return res.json(stock);
+    
+    const isTW = /^\d+$/.test(cleanTicker);
+    const { klines } = await fetchStockKLines(cleanTicker, isTW, cleanTicker);
+    if (!klines || klines.length < 50) return res.status(404).json({ error: "查無此代號或歷史數據不足。" });
+    
+    const analyzed = computeStockAnalysis(cleanTicker, cleanTicker, isTW ? "上市" : "US/NASDAQ", isTW ? "TW" : "US", klines, 50);
+    if (!analyzed) return res.status(500).json({ error: "分析失敗。" });
+    res.json(analyzed);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Post analysis request
 app.post("/api/analyze", async (req, res) => {
   try {
@@ -2123,12 +2152,10 @@ Pivot 臨界買點價: ${stock.buyPoint}
 
 請直接輸出繁體中文分析報告（可使用簡短的 Markdown 標題，段落條理要分明）。`;
 
-    const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-    });
-
-    const analysisText = response.text || getRuleBasedAnalysis(stock);
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const analysisText = response.text() || getRuleBasedAnalysis(stock);
     res.json({ analysis: analysisText });
   } catch (error) {
     console.error("Gemini proxy analysis error:", error);
