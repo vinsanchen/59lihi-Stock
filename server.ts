@@ -9,53 +9,13 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import admin from "firebase-admin";
 
 dotenv.config();
-
-// Initialize Firebase Admin
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8"));
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId
-  });
-}
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
-
-// Middleware to verify Firebase ID Token
-async function authenticate(req: any, res: any, next: any) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({ error: "Unauthorized" });
-    }
-    const idToken = authHeader.split("Bearer ")[1];
-    try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        req.user = decodedToken;
-        next();
-    } catch (error) {
-        console.error("Auth Error:", error);
-        res.status(401).json({ error: "Invalid token" });
-    }
-}
-
-async function optionalAuthenticate(req: any, res: any, next: any) {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-        const idToken = authHeader.split("Bearer ")[1];
-        try {
-            const decodedToken = await admin.auth().verifyIdToken(idToken);
-            req.user = decodedToken;
-        } catch (error) {
-            console.warn("Optional Auth Error:", error);
-        }
-    }
-    next();
-}
 
 // Lazy-loaded model instance
 let ai: GoogleGenAI | null = null;
@@ -173,36 +133,21 @@ async function fetchTWSEList(): Promise<{ ticker: string, name: string, industry
 }
 
 // Memory database / cache for market scrape results
-let marketDataCache: any = null;
+let marketDataCache: {
+  lastUpdated: string;
+  taiex: { price: number; changePercent: number; date: string };
+  nasdaq: { price: number; changePercent: number; date: string };
+  twStocks: any[];
+  usStocks: any[];
+  stockPoolCount?: number;
+  topIndustries?: any[];
+} | null = null;
 
 // Cool-down tracking to protect Yahoo Finance and Stooq API from rate blocks
 let yahooRateLimitUntil = 0;
 let stooqRateLimitUntil = 0;
 let finMindRateLimitUntil = 0;
 let globalSyncingFlag = false;
-
-// Per-user session states
-interface UserMarketState {
-    marketDataCache: any | null;
-    globalSyncingFlag: boolean;
-}
-const userStates = new Map<string, UserMarketState>();
-const globalState: UserMarketState = {
-    marketDataCache: null,
-    globalSyncingFlag: false
-};
-
-function getUserState(uid: string): UserMarketState {
-    if (!userStates.has(uid)) {
-        userStates.set(uid, {
-            marketDataCache: null,
-            globalSyncingFlag: false
-        });
-    }
-    return userStates.get(uid)!;
-}
-
-// Cool-down tracking...
 
 // ==========================================
 // SEPA Watchlist Tracker Registry
@@ -1295,10 +1240,9 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
 }
 
 // Perform market sync across all TWSE listed stocks
-async function performMarketSync(uid?: string): Promise<boolean> {
-  const state = uid ? getUserState(uid) : globalState;
-  if (state.globalSyncingFlag) return false;
-  state.globalSyncingFlag = true;
+async function performMarketSync(): Promise<boolean> {
+  if (globalSyncingFlag) return false;
+  globalSyncingFlag = true;
   
   try {
     console.log("[Market Sync Started] Bootstrapping real-time market scanner for TWSE...");
@@ -1705,120 +1649,99 @@ async function performMarketSync(uid?: string): Promise<boolean> {
     .sort((a, b) => (b.avgSepa + b.breakoutRate/2) - (a.avgSepa + a.breakoutRate/2))
     .slice(0, 5);
 
-    state.marketDataCache = {
-      lastUpdated: formatTime,
-      taiex: taiexInfo,
-      nasdaq: nasdaqInfo,
-      twStocks: checkedTwList,
-      usStocks: finalUsList,
-      stockPoolCount: twseStockList.length,
-      topIndustries: rankedIndustries
-    };
-    
-    if (uid) {
-        const cachePath = path.join(process.cwd(), `market_cache_${uid}.json`);
-        const tempPath = cachePath + ".tmp";
-        fs.writeFileSync(tempPath, JSON.stringify(state.marketDataCache, null, 2));
-        fs.renameSync(tempPath, cachePath);
-    } else {
-        const cachePath = path.join(process.cwd(), "market_cache.json");
-        const tempPath = cachePath + ".tmp";
-        fs.writeFileSync(tempPath, JSON.stringify(state.marketDataCache, null, 2));
-        fs.renameSync(tempPath, cachePath);
-    }
-    
-    console.log(`[Market Sync Completed] User: ${uid || "Global"}. Last updated: ${formatTime}`);
-    state.globalSyncingFlag = false;
-    return true;
-  } catch (err) {
-    console.error(`[Market Sync Fatal Error] User: ${uid || "Global"}`, err);
-    state.globalSyncingFlag = false;
-    return false;
-  }
+  marketDataCache = {
+    lastUpdated: formatTime,
+    taiex: taiexInfo,
+    nasdaq: nasdaqInfo,
+    twStocks: checkedTwList,
+    usStocks: finalUsList,
+    stockPoolCount: twseStockList.length,
+    topIndustries: rankedIndustries
+  };
+  
+  saveCacheToFile();
+  console.log(`[Market Sync Completed] Cleaned ${checkedTwList.length} active stocks. Last updated: ${formatTime}`);
+  globalSyncingFlag = false;
+  return true;
+} catch (err) {
+  console.error("[Market Sync Fatal Error]", err);
+  globalSyncingFlag = false;
+  return false;
+}
 }
 
 // REST route to deliver real market data
-app.get("/api/market-data", optionalAuthenticate, async (req: any, res) => {
-  const uid = req.user?.uid;
-  const state = uid ? getUserState(uid) : globalState;
+app.get("/api/market-data", async (req, res) => {
   const force = req.query.force === "true";
   
   try {
-    if (!state.marketDataCache) {
-       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
-       const cachePath = path.join(process.cwd(), cacheFileName);
-       if (fs.existsSync(cachePath)) {
-           try {
-               const data = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-               state.marketDataCache = data;
-           } catch (parseError) {
-               console.error(`[Cache Parse Error] Corrupted cache file: ${cacheFileName}`, parseError);
-               // If corrupted, delete it to allow fresh sync
-               try { fs.unlinkSync(cachePath); } catch (e) {}
-           }
-       }
+    if (!marketDataCache) {
+      loadCacheFromFile();
     }
     
     // If we have a cache and not a force request, return immediately
-    if (state.marketDataCache && !force) {
-      return res.json({ ...state.marketDataCache, isBackgroundSyncing: state.globalSyncingFlag });
+    if (marketDataCache && !force) {
+      return res.json({ ...marketDataCache, isBackgroundSyncing: false });
     }
     
-    // Guests cannot force rescan
-    if (force && !uid) {
-        return res.status(403).json({ error: "只有登入使用者可以執行手動掃描" });
+    // If force or no cache, we start a sync
+    console.log(`[Market API] ${force ? "Force rescan" : "No cache"} triggered. Checking status...`);
+    
+    // Status check: if already syncing, don't double trigger
+    const isSyncing = globalSyncingFlag; 
+    
+    if (force) {
+      console.log("[Market API] Forced reset of rate-limit sentinels...");
+      yahooRateLimitUntil = 0;
+      stooqRateLimitUntil = 0;
+      finMindRateLimitUntil = 0;
     }
-
+    
     // Start full sync in background if needed
-    if (force && uid && !state.globalSyncingFlag) {
-      performMarketSync(uid).catch(err => {
-        console.error(`[Background Sync Error] User: ${uid}`, err);
-        if (getUserState(uid)) getUserState(uid).globalSyncingFlag = false;
+    if (!isSyncing && (!marketDataCache || force)) {
+      performMarketSync().catch(err => {
+        console.error("[Background Sync Error]", err);
+        globalSyncingFlag = false;
       });
-    }
-
-    // Initial background sync for global if no cache exists
-    if (!state.marketDataCache && !state.globalSyncingFlag) {
-        performMarketSync(uid || undefined).catch(err => {
-            if (uid) getUserState(uid).globalSyncingFlag = false;
-            else globalSyncingFlag = false;
-        });
     }
     
     // Return what we have
-    if (state.marketDataCache) {
+    if (marketDataCache) {
       const stripKlines = (stocks: any[]) => stocks.map(({ klines, ...rest }) => rest);
       
       return res.json({ 
-        ...state.marketDataCache, 
-        twStocks: stripKlines(state.marketDataCache.twStocks || []),
-        usStocks: stripKlines(state.marketDataCache.usStocks || []),
-        isBackgroundSyncing: state.globalSyncingFlag,
-        message: state.globalSyncingFlag ? `掃描進度更新中...` : undefined
+        ...marketDataCache, 
+        twStocks: stripKlines(marketDataCache.twStocks || []),
+        usStocks: stripKlines(marketDataCache.usStocks || []),
+        isBackgroundSyncing: globalSyncingFlag || isSyncing,
+        message: globalSyncingFlag ? `掃描進度: ${marketDataCache.lastUpdated}` : undefined
       });
     } else {
+      // Return a structured pending response so the UI knows we're working
       return res.json({ 
-        lastUpdated: uid ? "正在為您的帳號初始化數據..." : "正在初始化數據...", 
+        lastUpdated: "正在初始化數據...", 
         twStocks: [], 
         taiex: { price: 0, changePercent: 0, date: "" },
         isBackgroundSyncing: true,
-        message: uid ? "正在為您進行首次市場掃描，請稍後 1~2 分鐘。" : "系統偵測到尚無資料，正在從交易所獲取數據中..." 
+        message: "系統偵測到目前尚無存檔，正在從交易所緊急獲取權值股數據，請稍後 1~2 分鐘並重新整理。" 
       });
     }
   } catch (error: any) {
-    console.error(`[Market Data Sync Error] User: ${uid || "Guest"}`, error);
-    res.status(500).json({ error: "市場資料解析失敗" });
+    console.error("[Market Data Sync Error] /api/market-data failed:", error.message || error);
+    res.status(500).json({ error: "市場資料解析失敗", details: error.message || error });
   }
 });
 
-app.post("/api/scan-market", authenticate, async (req: any, res) => {
-  const uid = req.user.uid;
+app.post("/api/scan-market", async (req, res) => {
   try {
-    await performMarketSync(uid);
-    const state = getUserState(uid);
-    res.json({ success: true, lastUpdated: state.marketDataCache?.lastUpdated });
+    console.log("[Force Rescan Requested] Clearing memory cache, resetting rate boundaries, and synchronizing...");
+    yahooRateLimitUntil = 0; 
+    stooqRateLimitUntil = 0; // Clear rate-limit cooldowns on user manual request
+    await performMarketSync();
+    res.json({ success: true, lastUpdated: marketDataCache?.lastUpdated, taiex: marketDataCache?.taiex });
   } catch (error: any) {
-    res.status(500).json({ error: "市場資料同步失敗" });
+    console.error("[POST scan-market Error]", error.message || error);
+    res.status(500).json({ error: "市場資料同步失敗，請檢查資料來源。", details: error.message || error });
   }
 });
 
@@ -1983,7 +1906,7 @@ function loadIndustryMapping() {
 }
 loadIndustryMapping();
 
-app.post("/api/industry-mapping", authenticate, express.json(), (req: any, res) => {
+app.post("/api/industry-mapping", express.json(), (req, res) => {
   try {
     const { mapping } = req.body;
     industryMapping = mapping;
@@ -1998,36 +1921,28 @@ app.get("/api/industry-mapping", (req, res) => {
     res.json(industryMapping);
 });
 
-app.get("/api/stock-list-simple", optionalAuthenticate, (req: any, res) => {
-    const uid = req.user?.uid;
-    const state = uid ? getUserState(uid) : globalState;
-    if (!state.marketDataCache) return res.json([]);
-    const list = [...state.marketDataCache.twStocks, ...state.marketDataCache.usStocks].map((s: any) => ({
+app.get("/api/stock-list-simple", (req, res) => {
+    if (!marketDataCache) return res.json([]);
+    const list = [...marketDataCache.twStocks, ...marketDataCache.usStocks].map(s => ({
         ticker: s.ticker,
         name: s.name
     }));
     res.json(list);
 });
 
-app.get("/api/fundamentals/:ticker", optionalAuthenticate, async (req: any, res) => {
-  const uid = req.user?.uid;
-  const state = uid ? getUserState(uid) : globalState;
+app.get("/api/fundamentals/:ticker", async (req, res) => {
   try {
     const { ticker } = req.params;
-    if (!state.marketDataCache) {
-       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
-       const cachePath = path.join(process.cwd(), cacheFileName);
-       if (fs.existsSync(cachePath)) {
-           state.marketDataCache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-       }
+    if (!marketDataCache) {
+      loadCacheFromFile();
     }
-    if (!state.marketDataCache) {
+    if (!marketDataCache) {
       return res.status(404).json({ error: "Data not available yet" });
     }
 
     const cleanTicker = ticker.split(".")[0];
-    const stock = state.marketDataCache.twStocks.find((s: any) => s.ticker === ticker) || 
-                  state.marketDataCache.usStocks.find((s: any) => s.ticker === ticker);
+    const stock = marketDataCache.twStocks.find(s => s.ticker === ticker) || 
+                  marketDataCache.usStocks.find(s => s.ticker === ticker);
                   
     if (!stock) {
       return res.status(404).json({ error: "Stock not found" });
@@ -2049,7 +1964,7 @@ app.get("/api/fundamentals/:ticker", optionalAuthenticate, async (req: any, res)
     const mappedIndustry = industryMapping[cleanTicker] || "未分類";
 
     // All stocks with their mapped industry
-    const allStocksWithIndustry = [...state.marketDataCache.twStocks, ...state.marketDataCache.usStocks].map((s: any) => ({
+    const allStocksWithIndustry = [...marketDataCache.twStocks, ...marketDataCache.usStocks].map(s => ({
         ...s,
         mappedIndustry: industryMapping[s.ticker.split(".")[0]] || "未分類"
     }));
@@ -2141,25 +2056,19 @@ app.get("/api/fundamentals/:ticker", optionalAuthenticate, async (req: any, res)
   }
 });
 
-app.get("/api/stock-klines/:ticker", optionalAuthenticate, async (req: any, res) => {
-  const uid = req.user?.uid;
-  const state = uid ? getUserState(uid) : globalState;
+app.get("/api/stock-klines/:ticker", async (req, res) => {
   try {
     const { ticker } = req.params;
-    if (!state.marketDataCache) {
-       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
-       const cachePath = path.join(process.cwd(), cacheFileName);
-       if (fs.existsSync(cachePath)) {
-           state.marketDataCache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-       }
+    if (!marketDataCache) {
+      loadCacheFromFile();
     }
     
-    if (!state.marketDataCache) {
+    if (!marketDataCache) {
       return res.status(404).json({ error: "Data not available yet" });
     }
     
-    const stock = state.marketDataCache.twStocks.find((s: any) => s.ticker === ticker) || 
-                  state.marketDataCache.usStocks.find((s: any) => s.ticker === ticker);
+    const stock = marketDataCache.twStocks.find(s => s.ticker === ticker) || 
+                  marketDataCache.usStocks.find(s => s.ticker === ticker);
                   
     if (!stock) {
       return res.status(404).json({ error: "Stock not found" });
@@ -2172,7 +2081,7 @@ app.get("/api/stock-klines/:ticker", optionalAuthenticate, async (req: any, res)
 });
 
 // Post analysis request
-app.post("/api/analyze", authenticate, async (req: any, res) => {
+app.post("/api/analyze", async (req, res) => {
   try {
     const { stock } = req.body;
     if (!stock) {

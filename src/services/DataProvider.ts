@@ -27,15 +27,13 @@ export class DataProvider {
   private static taiexVal = { price: 0, changePercent: 0, date: "" };
   private static nasdaqVal = { price: 0, changePercent: 0, date: "" };
 
-  public static async loadFromAPI(force = false, customWeights?: SepaWeights, token?: string): Promise<{ success: boolean; isSyncing: boolean; message?: string }> {
+  public static async loadFromAPI(force = false, customWeights?: SepaWeights): Promise<{ success: boolean; isSyncing: boolean; message?: string }> {
     if (customWeights) {
       this.weights = customWeights;
     }
     try {
       const url = `/api/market-data${force ? "?force=true" : ""}`;
-      const res = await fetch(url, {
-        headers: token ? { "Authorization": `Bearer ${token}` } : {}
-      });
+      const res = await fetch(url);
       if (!res.ok) {
         throw new Error("市場資料同步失敗，請檢查資料來源。");
       }
@@ -117,11 +115,9 @@ export class DataProvider {
     return stock;
   }
 
-  public static async fetchKlines(ticker: string, token?: string): Promise<KLine[]> {
+  public static async fetchKlines(ticker: string): Promise<KLine[]> {
     try {
-      const res = await fetch(`/api/stock-klines/${ticker}`, {
-        headers: token ? { "Authorization": `Bearer ${token}` } : {}
-      });
+      const res = await fetch(`/api/stock-klines/${ticker}`);
       if (!res.ok) return [];
       return await res.json();
     } catch (err) {
@@ -130,11 +126,9 @@ export class DataProvider {
     }
   }
 
-  public static async fetchFundamentals(ticker: string, token?: string): Promise<any> {
+  public static async fetchFundamentals(ticker: string): Promise<any> {
     try {
-      const res = await fetch(`/api/fundamentals/${ticker}`, {
-        headers: token ? { "Authorization": `Bearer ${token}` } : {}
-      });
+      const res = await fetch(`/api/fundamentals/${ticker}`);
       if (!res.ok) return null;
       return await res.json();
     } catch (err) {
@@ -143,11 +137,9 @@ export class DataProvider {
     }
   }
 
-  public static async fetchStockListSimple(token?: string): Promise<{ ticker: string, name: string }[]> {
+  public static async fetchStockListSimple(): Promise<{ ticker: string, name: string }[]> {
     try {
-        const res = await fetch("/api/stock-list-simple", {
-            headers: token ? { "Authorization": `Bearer ${token}` } : {}
-        });
+        const res = await fetch("/api/stock-list-simple");
         return await res.json();
     } catch (err) {
         console.error("[DataProvider] Failed to fetch simple stock list:", err);

@@ -13,7 +13,7 @@ interface SuperPerformanceManagementProps {
 }
 
 export default function SuperPerformanceManagement({ stock, klines }: SuperPerformanceManagementProps) {
-  const { buyPoint, lastClose, stopLoss, pivotCreationDate, lastMA50: ma50 } = stock;
+  const { buyPoint, lastClose, stopLoss, pivotCreationDate, ma50 } = stock;
 
   const stats = useMemo(() => {
     // Default stats for when no breakout has occurred or data is missing
@@ -28,7 +28,7 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
     if (!pivotCreationDate || klines.length === 0) return defaultStats;
 
     // Find breakout bar index
-    const breakoutIndex = klines.findIndex(k => k.date && (k.date === pivotCreationDate || k.date.startsWith(pivotCreationDate || "")));
+    const breakoutIndex = klines.findIndex(k => k.time && (k.time === pivotCreationDate || k.time.startsWith(pivotCreationDate)));
     if (breakoutIndex === -1) return defaultStats;
 
     // Trading days since breakout
@@ -85,7 +85,7 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
   }, [stock, klines, pivotCreationDate, lastClose, buyPoint, stopLoss, ma50]);
 
   // Only show holding management if the stock is actually in a breakout/post-breakout state
-  const isBreakoutActive = stock.status === "已突破" || stock.status === "突破回撤" || stock.status === "過度延伸，不建議追";
+  const isBreakoutActive = stock.status === "已突破" || stock.status === "突破回撤" || (stock.status === "過度延伸，不建議追" && stock.pivotStatus === "Breakout");
   
   if (!isBreakoutActive) return null;
 
@@ -181,7 +181,7 @@ export default function SuperPerformanceManagement({ stock, klines }: SuperPerfo
                      stats.strategy === 'reduce' ? "text-amber-400" :
                      "text-rose-400"
                 }`}>
-                    {stats.strategy === 'hold' ? (stats.rule8WStatus === 'activated' ? "🟢 強勢持有" : "🟢 觀察持有") : stats.strategy === 'reduce' ? "🟡 減碼觀察" : "🔴 出場"}
+                    {stats.strategy === 'hold' ? "🟢 持有" : stats.strategy === 'reduce' ? "🟡 減碼觀察" : "🔴 出場"}
                 </div>
             </div>
         </div>

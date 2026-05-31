@@ -82,7 +82,7 @@ export default function SepaScores({ stock, customWeights }: SepaScoresProps) {
         <div>
           <h4 className="font-sans font-bold text-gray-100 flex items-center gap-2">
             <span className="p-1 rounded bg-indigo-500/10 text-indigo-400 text-xs">Score</span>
-            59LiHi 100 分制綜合量化評級
+            SEPA 100 分制綜合量化評級
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">根據 Mark Minervini 強勢股篩選因數演算權重</p>
         </div>

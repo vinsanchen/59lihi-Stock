@@ -32,8 +32,7 @@ import {
   Bookmark,
   Activity,
   Ban,
-  Sparkles,
-  LogIn
+  Sparkles
 } from "lucide-react";
 import { StockAnalysis, SepaWeights, FilterSettings, LiquidityParameters } from "./types";
 import { DataProvider, DEFAULT_WEIGHTS } from "./services/DataProvider";
@@ -62,32 +61,8 @@ const TOP_INDUSTRIES = [
   { name: "散熱", avgSepa: 0, breakoutRate: 0, leaders: [] }
 ];
 
-import { FirebaseProvider, useAuth } from "./components/FirebaseProvider";
-import LoginScreen from "./components/LoginScreen";
-
-import { auth } from "./lib/firebase";
-
-export default function AppWrapper() {
-  return (
-    <FirebaseProvider>
-      <AppContent />
-    </FirebaseProvider>
-  );
-}
-
-function AppContent() {
-  const { user, loading: authLoading } = useAuth();
-  const [token, setToken] = useState<string | undefined>();
-  const [showLoginModal, setShowLoginModal] = useState(false);
+export default function App() {
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings" | "industry">("watchlist");
-
-  useEffect(() => {
-    if (user) {
-      user.getIdToken().then(setToken);
-    } else {
-      setToken(undefined);
-    }
-  }, [user]);
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
     try {
       return localStorage.getItem("sepa_show_sidebar") !== "false";
@@ -180,7 +155,7 @@ function AppContent() {
 
     const loadData = async (isForced = false) => {
       try {
-        const result = await DataProvider.loadFromAPI(isForced, weights, token);
+        const result = await DataProvider.loadFromAPI(isForced, weights);
         if (active) {
           const tw = DataProvider.getTwStocks(weights);
           const us = DataProvider.getUsStocks(weights);
@@ -225,7 +200,7 @@ function AppContent() {
     let active = true;
     const fetchK = async () => {
       setLoadingKlines(true);
-      const k = await DataProvider.fetchKlines(selectedTicker, token);
+      const k = await DataProvider.fetchKlines(selectedTicker);
       if (active) {
         setActiveKlines(k);
         setLoadingKlines(false);
@@ -245,7 +220,7 @@ function AppContent() {
     const loadFundamentals = async () => {
       setFundamentalLoading(true);
       try {
-        const data = await DataProvider.fetchFundamentals(selectedTicker, token);
+        const data = await DataProvider.fetchFundamentals(selectedTicker);
         if (active && data) {
           setFundamentalCache(prev => ({ ...prev, [selectedTicker]: data }));
         }
@@ -268,17 +243,12 @@ function AppContent() {
   }, []);
 
   const handleRefresh = async () => {
-    if (refreshing) return;
-    if (!user) {
-        setShowLoginModal(true);
-        return;
-    }
     setRefreshing(true);
     setError(null);
     setSyncMessage("要求已送出，正在排隊執行掃描...");
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
-      const result = await DataProvider.loadFromAPI(true, weights, token);
+      const result = await DataProvider.loadFromAPI(true, weights);
       if (result.success) {
         setSyncMessage(result.message || "正在掃描市場...");
         setRefreshing(result.isSyncing);
@@ -349,17 +319,14 @@ function AppContent() {
 
   // Trigger Gemini AI proxy analysis on server
   const fetchAiAnalysis = async (stock: StockAnalysis) => {
-    if (!token || aiReportCache[stock.ticker]) return; // already analyzed/cached
+    if (aiReportCache[stock.ticker]) return; // already analyzed/cached
     setAiLoading(true);
     setAiReportCache((prev) => ({ ...prev, [stock.ticker]: "分析產生中，請稍候..." }));
 
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stock }),
       });
       const data = await response.json();
@@ -679,28 +646,8 @@ function AppContent() {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await auth.signOut();
-    } catch (e) {
-      console.error("Logout failed", e);
-    }
-  };
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-[#0D1117] flex items-center justify-center font-sans">
-        <div className="flex flex-col items-center gap-4">
-          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
-          <p className="text-gray-500 text-sm font-black uppercase tracking-widest">系統初始化中...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <>
-      <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
+    <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
       <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
@@ -708,10 +655,10 @@ function AppContent() {
         {/* Logo and tabs links */}
         <div className="flex items-center gap-4 md:gap-8">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">59LH</div>
+            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">SEPA</div>
             <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-white">59LiHi 大師投資系統</span>
-              <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">High-Probability Master Investing Engine</span>
+              <span className="font-bold text-sm tracking-tight text-white">SEPA 股票篩選與買賣點分析系統</span>
+              <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">Minervini Trend Template Engine</span>
             </div>
           </div>
           
@@ -724,7 +671,7 @@ function AppContent() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              台股 Top 20
+              台股 SEPA Top 20
             </button>
             <button
               onClick={() => setActiveTab("us")}
@@ -734,7 +681,7 @@ function AppContent() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              美股 Top 20
+              美股 SEPA Top 20
             </button>
             <button
               onClick={() => setActiveTab("watchlist")}
@@ -745,7 +692,7 @@ function AppContent() {
               }`}
             >
               <ClipboardList className="w-3.5 h-3.5 text-indigo-400" />
-              <span>觀察池</span>
+              <span>SEPA 觀察池</span>
             </button>
             <button
               onClick={() => setActiveTab("single")}
@@ -827,39 +774,6 @@ function AppContent() {
               </p>
             </div>
           )}
-          
-          {/* User Auth Status */}
-          <div className="flex flex-col gap-4">
-            {user ? (
-              <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
-                {user.photoURL ? (
-                  <img referrerPolicy="no-referrer" src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-full border border-indigo-500/30" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs">
-                    {user.displayName?.charAt(0) || user.email?.charAt(0) || "U"}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-bold text-gray-200 truncate">{user.displayName || user.email}</p>
-                  <button 
-                    onClick={handleLogout}
-                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider"
-                  >
-                    登出帳號
-                  </button>
-                </div>
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowLoginModal(true)}
-                className="flex items-center justify-center gap-2 w-full p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg active:scale-[0.98]"
-              >
-                <LogIn className="w-4 h-4" />
-                登入以同步個人掃描
-              </button>
-            )}
-          </div>
           
           {/* Context Dynamic Filter panel */}
           {(activeTab === "tw" || activeTab === "us") && (
@@ -1134,7 +1048,7 @@ function AppContent() {
                 <div className="space-y-1">
                   <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
                     <Globe2 className="w-4 h-4 text-emerald-500" />
-                    今日上市股 Top 20 領先股
+                    今日上市股 SEPA Top 20 領先股
                   </h2>
                   <p className="text-[11px] text-gray-400">
                     基於 Mark Minervini 經典 SEPA 趨勢模型演算法，根據即時數據篩選出符合特徵的前 20 名台股強勢領先股。
@@ -1166,7 +1080,7 @@ function AppContent() {
                           <div className="flex items-center justify-end gap-1">漲跌幅 <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "sepaScoreTotal")}>
-                          <div className="flex items-center justify-end gap-1 text-emerald-400">59LiHi <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
+                          <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("tw", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
@@ -1373,7 +1287,7 @@ function AppContent() {
                           <div className="flex items-center justify-end gap-1">Change % <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "sepaScoreTotal")}>
-                          <div className="flex items-center justify-end gap-1 text-emerald-400">59LiHi <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
+                          <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("us", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
@@ -1507,10 +1421,10 @@ function AppContent() {
                     <div className="flex flex-col gap-1.5">
                       <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-400/30 text-indigo-400 w-fit">
                         <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-                        <span>59LiHi 趨勢觀察池</span>
+                        <span>SEPA 趨勢觀察池</span>
                       </div>
                       <h1 className="text-2xl font-black text-white tracking-tight sm:text-3xl">
-                        59LiHi 強勢龍頭持續追蹤系統
+                        SEPA 強勢龍頭持續追蹤系統
                       </h1>
                     </div>
                     
@@ -1720,7 +1634,7 @@ function AppContent() {
                         <th className="py-2 px-2 text-center">Pivot 狀態</th>
                         <th className="py-2 px-2 text-right text-emerald-300">建議 Pivot</th>
                         <th className="py-2 px-2 text-right text-gray-500">原始 Pivot</th>
-                        <th className="py-2 px-2 text-center">59LiHi 總分</th>
+                        <th className="py-2 px-2 text-center">SEPA 總分</th>
                         <th className="py-2 px-2">當前收斂型態</th>
                         <th className="py-2 px-2 text-right">距離買點</th>
                         <th className="py-2 px-3 text-center">操作診斷</th>
@@ -2173,7 +2087,7 @@ function AppContent() {
                             <Lock className="w-8 h-8 text-slate-700 mx-auto" />
                             <div className="space-y-1">
                               <p className="font-bold text-gray-400">研析報告庫未啟用點評</p>
-                              <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 59LiHi 大師級深度操盤研判</p>
+                              <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 SEPA 大師級深度操盤研判</p>
                             </div>
                           </div>
                         )}
@@ -2537,7 +2451,7 @@ function AppContent() {
       {/* Persistent Legal disclaimer bar and state */}
       <footer className="bg-[#010409] border-t border-[#30363D] px-4 md:px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 text-[10px] text-gray-550 z-45 shrink-0">
         <div className="flex items-center gap-4">
-          <span>&copy; 2026 59LiHi Master Investing System</span>
+          <span>&copy; 2026 Mark Minervini SEPA® Tracker Platform</span>
           <span className="flex items-center gap-1.5 text-emerald-500 font-bold">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             系統演算引擎已在線
@@ -2554,16 +2468,7 @@ function AppContent() {
           Cluster: Cloud-Run-Prod-TW-1
         </div>
       </footer>
-      {showLoginModal && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLoginModal(false)}></div>
-          <div className="relative w-full max-w-md">
-            <LoginScreen isModal onClose={() => setShowLoginModal(false)} />
-          </div>
-        </div>
-      )}
     </div>
-    </>
   );
 }
 
