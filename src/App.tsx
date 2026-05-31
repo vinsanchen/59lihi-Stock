@@ -143,8 +143,6 @@ export default function App() {
   // Gemini AI detailed Analysis cache
   const [aiReportCache, setAiReportCache] = useState<{ [ticker: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
-  const [deepSearchTicker, setDeepSearchTicker] = useState("");
-  const [deepSearching, setDeepSearching] = useState(false);
 
   // Fundamental data cache
   const [fundamentalCache, setFundamentalCache] = useState<{ [ticker: string]: any }>({});
@@ -264,37 +262,6 @@ export default function App() {
       console.error("[Frontend] Force rescan failed:", e);
       setError(e.message || "市場資料同步失敗，請檢查資料來源。");
       setRefreshing(false);
-    }
-  };
-
-  const handleDeepSearch = async () => {
-    if (!deepSearchTicker) return;
-    setDeepSearching(true);
-    setError(null);
-    try {
-      const stock = await DataProvider.fetchStockDetails(deepSearchTicker);
-      if (stock) {
-        // If it's a new stock, add it temporarily to the relevant list so user can see it
-        if (stock.country === "TW") {
-          setTwStocks(prev => {
-            if (prev.find(s => s.ticker === stock.ticker)) return prev;
-            return [stock, ...prev];
-          });
-        } else {
-          setUsStocks(prev => {
-            if (prev.find(s => s.ticker === stock.ticker)) return prev;
-            return [stock, ...prev];
-          });
-        }
-        setSelectedTicker(stock.ticker);
-        setDeepSearchTicker("");
-      } else {
-        setError(`無法找到或分析代號: ${deepSearchTicker}。請確保代號正確（例: 2330.TW 或 NVDA）。`);
-      }
-    } catch (e: any) {
-      setError(e.message || "搜尋分析失敗");
-    } finally {
-      setDeepSearching(false);
     }
   };
 
@@ -683,43 +650,19 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-[#161B22]/90 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3 flex flex-col gap-3.5 select-none shrink-0">
+      <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
         
-        {/* Top row: Logo & text info on the left, Sync actions on the right */}
-        <div className="flex items-center justify-between gap-4 w-full">
-          {/* Logo */}
+        {/* Logo and tabs links */}
+        <div className="flex items-center gap-4 md:gap-8">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider shrink-0">SEPA</div>
+            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">SEPA</div>
             <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-white leading-tight">SEPA 股票篩選與買賣點分析系統</span>
+              <span className="font-bold text-sm tracking-tight text-white">SEPA 股票篩選與買賣點分析系統</span>
               <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">Minervini Trend Template Engine</span>
             </div>
           </div>
-
-          {/* Sync panel actions (Always pinned on the right) */}
-          <div className="flex items-center gap-3.5 shrink-0">
-            <div className="text-right flex flex-col justify-center">
-              <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
-              <span className="text-xs font-mono text-[#8B949E] font-semibold block leading-tight">{lastUpdated || "等待同步中..."}</span>
-              {refreshing && syncMessage && (
-                <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
-              )}
-            </div>
-
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none shrink-0"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? "掃描演算中..." : "重新掃描市場"}
-            </button>
-          </div>
-        </div>
-
-        {/* Bottom row: Navigation tabs (Clean horizontal flow, no overflow clutter) */}
-        <div className="flex items-center overflow-x-auto pb-0.5 scrollbar-none select-none">
-          <nav className="flex items-center bg-black/30 p-0.5 rounded-lg border border-[#30363D] shrink-0">
+          
+          <nav className="flex items-center bg-black/30 p-0.5 rounded-lg border border-[#30363D]">
             <button
               onClick={() => setActiveTab("tw")}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide transition-all ${
@@ -774,13 +717,33 @@ export default function App() {
             <button
               onClick={() => setActiveTab("settings")}
               className={`p-1.5 rounded-md text-xs transition-colors ${
-                activeTab === "settings" ? "bg-slate-800 text-indigo-400" : "text-[#8B949E] hover:text-[#E6EDF3]"
+                activeTab === "settings" ? "bg-slate-800 text-indigo-400" : "text-[#8B949E] hover:text-white"
               }`}
               title="系統設定"
             >
               <Settings className="w-4 h-4" />
             </button>
           </nav>
+        </div>
+
+        {/* Sync panel actions */}
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:block text-right">
+            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
+            <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
+            {refreshing && syncMessage && (
+              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
+            )}
+          </div>
+
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "掃描演算中..." : "重新掃描市場"}
+          </button>
         </div>
       </header>
 
@@ -1889,25 +1852,14 @@ export default function App() {
 
                 {/* Direct text lookup switcher input */}
                 <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={deepSearchTicker}
-                      onChange={(e) => setDeepSearchTicker(e.target.value.toUpperCase())}
-                      onKeyDown={(e) => e.key === "Enter" && handleDeepSearch()}
-                      placeholder="搜尋代號 (例: 2330.TW 或 NVDA)"
-                      className="bg-black border border-[#30363D] rounded-lg text-xs py-1.5 px-3 pl-8 w-48 font-mono font-bold tracking-widest text-[#a5b4fc] placeholder-gray-600 outline-none focus:border-indigo-500"
-                    />
-                    <Search className="w-3 h-3 text-gray-500 absolute left-2.5 top-2.5" />
-                  </div>
-                  <button
-                    onClick={handleDeepSearch}
-                    disabled={deepSearching || !deepSearchTicker}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
-                  >
-                    {deepSearching ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-                    <span>深度分析</span>
-                  </button>
+                  <label className="text-xs text-none font-semibold text-gray-400 hidden sm:inline">自訂代碼查詢:</label>
+                  <input
+                    type="text"
+                    value={selectedTicker}
+                    onChange={(e) => setSelectedTicker(e.target.value.toUpperCase())}
+                    placeholder="例如: 2330.TW 或 NVDA"
+                    className="bg-black border border-[#30363D] rounded-lg text-xs py-1.5 px-3 w-36 text-center font-mono font-bold tracking-widest text-[#a5b4fc] placeholder-gray-600 outline-none focus:border-indigo-500"
+                  />
                 </div>
               </div>
 
