@@ -61,8 +61,31 @@ const TOP_INDUSTRIES = [
   { name: "散熱", avgSepa: 0, breakoutRate: 0, leaders: [] }
 ];
 
-export default function App() {
+import { FirebaseProvider, useAuth } from "./components/FirebaseProvider";
+import LoginScreen from "./components/LoginScreen";
+
+import { auth } from "./lib/firebase";
+
+export default function AppWrapper() {
+  return (
+    <FirebaseProvider>
+      <AppContent />
+    </FirebaseProvider>
+  );
+}
+
+function AppContent() {
+  const { user, loading: authLoading } = useAuth();
+  const [token, setToken] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings" | "industry">("watchlist");
+
+  useEffect(() => {
+    if (user) {
+      user.getIdToken().then(setToken);
+    } else {
+      setToken(undefined);
+    }
+  }, [user]);
   const [showSidebar, setShowSidebar] = useState<boolean>(() => {
     try {
       return localStorage.getItem("sepa_show_sidebar") !== "false";
@@ -154,8 +177,9 @@ export default function App() {
     let pollInterval: any = null;
 
     const loadData = async (isForced = false) => {
+      if (!token) return;
       try {
-        const result = await DataProvider.loadFromAPI(isForced, weights);
+        const result = await DataProvider.loadFromAPI(isForced, weights, token);
         if (active) {
           const tw = DataProvider.getTwStocks(weights);
           const us = DataProvider.getUsStocks(weights);
@@ -199,8 +223,9 @@ export default function App() {
     
     let active = true;
     const fetchK = async () => {
+      if (!token) return;
       setLoadingKlines(true);
-      const k = await DataProvider.fetchKlines(selectedTicker);
+      const k = await DataProvider.fetchKlines(selectedTicker, token);
       if (active) {
         setActiveKlines(k);
         setLoadingKlines(false);
@@ -218,9 +243,10 @@ export default function App() {
 
     let active = true;
     const loadFundamentals = async () => {
+      if (!token) return;
       setFundamentalLoading(true);
       try {
-        const data = await DataProvider.fetchFundamentals(selectedTicker);
+        const data = await DataProvider.fetchFundamentals(selectedTicker, token);
         if (active && data) {
           setFundamentalCache(prev => ({ ...prev, [selectedTicker]: data }));
         }
@@ -243,12 +269,13 @@ export default function App() {
   }, []);
 
   const handleRefresh = async () => {
+    if (!token || refreshing) return;
     setRefreshing(true);
     setError(null);
     setSyncMessage("要求已送出，正在排隊執行掃描...");
     try {
       console.log("[Frontend] Triggering forced backend rescan and Cache eviction...");
-      const result = await DataProvider.loadFromAPI(true, weights);
+      const result = await DataProvider.loadFromAPI(true, weights, token);
       if (result.success) {
         setSyncMessage(result.message || "正在掃描市場...");
         setRefreshing(result.isSyncing);
@@ -319,14 +346,17 @@ export default function App() {
 
   // Trigger Gemini AI proxy analysis on server
   const fetchAiAnalysis = async (stock: StockAnalysis) => {
-    if (aiReportCache[stock.ticker]) return; // already analyzed/cached
+    if (!token || aiReportCache[stock.ticker]) return; // already analyzed/cached
     setAiLoading(true);
     setAiReportCache((prev) => ({ ...prev, [stock.ticker]: "分析產生中，請稍候..." }));
 
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({ stock }),
       });
       const data = await response.json();
@@ -646,6 +676,29 @@ export default function App() {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+    } catch (e) {
+      console.error("Logout failed", e);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0D1117] flex items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-4">
+          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="text-gray-500 text-sm font-black uppercase tracking-widest">系統初始化中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !token) {
+    return <LoginScreen />;
+  }
+
   return (
     <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
@@ -655,10 +708,10 @@ export default function App() {
         {/* Logo and tabs links */}
         <div className="flex items-center gap-4 md:gap-8">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">SEPA</div>
+            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">59LH</div>
             <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-white">SEPA 股票篩選與買賣點分析系統</span>
-              <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">Minervini Trend Template Engine</span>
+              <span className="font-bold text-sm tracking-tight text-white">59LiHi 大師投資系統</span>
+              <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">High-Probability Master Investing Engine</span>
             </div>
           </div>
           
@@ -671,7 +724,7 @@ export default function App() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              台股 SEPA Top 20
+              台股 59LiHi Top 20
             </button>
             <button
               onClick={() => setActiveTab("us")}
@@ -681,7 +734,7 @@ export default function App() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              美股 SEPA Top 20
+              美股 59LiHi Top 20
             </button>
             <button
               onClick={() => setActiveTab("watchlist")}
@@ -692,7 +745,7 @@ export default function App() {
               }`}
             >
               <ClipboardList className="w-3.5 h-3.5 text-indigo-400" />
-              <span>SEPA 觀察池</span>
+              <span>59LiHi 觀察池</span>
             </button>
             <button
               onClick={() => setActiveTab("single")}
@@ -1048,7 +1101,7 @@ export default function App() {
                 <div className="space-y-1">
                   <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
                     <Globe2 className="w-4 h-4 text-emerald-500" />
-                    今日上市股 SEPA Top 20 領先股
+                    今日上市股 59LiHi Top 20 領先股
                   </h2>
                   <p className="text-[11px] text-gray-400">
                     基於 Mark Minervini 經典 SEPA 趨勢模型演算法，根據即時數據篩選出符合特徵的前 20 名台股強勢領先股。
@@ -1080,7 +1133,7 @@ export default function App() {
                           <div className="flex items-center justify-end gap-1">漲跌幅 <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("tw", "sepaScoreTotal")}>
-                          <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
+                          <div className="flex items-center justify-end gap-1 text-emerald-400">59LiHi <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("tw", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
@@ -1287,7 +1340,7 @@ export default function App() {
                           <div className="flex items-center justify-end gap-1">Change % <ArrowUpDown className="w-3 h-3 text-slate-500" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-right" onClick={() => handleThSort("us", "sepaScoreTotal")}>
-                          <div className="flex items-center justify-end gap-1 text-emerald-400">SEPA <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
+                          <div className="flex items-center justify-end gap-1 text-emerald-400">59LiHi <ArrowUpDown className="w-3 h-3 text-emerald-600" /></div>
                         </th>
                         <th className="py-2 px-2 cursor-pointer hover:bg-slate-900/60 transition-colors text-center" onClick={() => handleThSort("us", "rsRanking")}>
                           <div className="flex items-center justify-center gap-1 text-indigo-400">RS Rank <ArrowUpDown className="w-3 h-3 text-indigo-600" /></div>
@@ -1421,10 +1474,10 @@ export default function App() {
                     <div className="flex flex-col gap-1.5">
                       <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/10 border border-indigo-400/30 text-indigo-400 w-fit">
                         <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-                        <span>SEPA 趨勢觀察池</span>
+                        <span>59LiHi 趨勢觀察池</span>
                       </div>
                       <h1 className="text-2xl font-black text-white tracking-tight sm:text-3xl">
-                        SEPA 強勢龍頭持續追蹤系統
+                        59LiHi 強勢龍頭持續追蹤系統
                       </h1>
                     </div>
                     
@@ -1634,7 +1687,7 @@ export default function App() {
                         <th className="py-2 px-2 text-center">Pivot 狀態</th>
                         <th className="py-2 px-2 text-right text-emerald-300">建議 Pivot</th>
                         <th className="py-2 px-2 text-right text-gray-500">原始 Pivot</th>
-                        <th className="py-2 px-2 text-center">SEPA 總分</th>
+                        <th className="py-2 px-2 text-center">59LiHi 總分</th>
                         <th className="py-2 px-2">當前收斂型態</th>
                         <th className="py-2 px-2 text-right">距離買點</th>
                         <th className="py-2 px-3 text-center">操作診斷</th>
@@ -2087,7 +2140,7 @@ export default function App() {
                             <Lock className="w-8 h-8 text-slate-700 mx-auto" />
                             <div className="space-y-1">
                               <p className="font-bold text-gray-400">研析報告庫未啟用點評</p>
-                              <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 SEPA 大師級深度操盤研判</p>
+                              <p className="text-[10px] text-gray-500">點擊下方按鈕引導 Gemini AI 對本股進行 59LiHi 大師級深度操盤研判</p>
                             </div>
                           </div>
                         )}
@@ -2451,7 +2504,7 @@ export default function App() {
       {/* Persistent Legal disclaimer bar and state */}
       <footer className="bg-[#010409] border-t border-[#30363D] px-4 md:px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 text-[10px] text-gray-550 z-45 shrink-0">
         <div className="flex items-center gap-4">
-          <span>&copy; 2026 Mark Minervini SEPA® Tracker Platform</span>
+          <span>&copy; 2026 59LiHi Master Investing System</span>
           <span className="flex items-center gap-1.5 text-emerald-500 font-bold">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             系統演算引擎已在線

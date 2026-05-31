@@ -1,6 +1,6 @@
 {
-  "name": "SEPA 股票篩選與買賣點分析系統",
-  "description": "基於 Mark Minervini 的 SEPA、Trend Template、VCP 理論所設計的強勢股篩選與買賣點戰術分析系統。",
+  "name": "59LiHi大師投資系統",
+  "description": "基於高勝率交易策略設計的強勢股篩選與買賣點戰術分析系統。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
