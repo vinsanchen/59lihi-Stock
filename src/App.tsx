@@ -683,19 +683,43 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <header className="sticky top-0 z-50 bg-[#161B22]/90 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3 flex flex-col gap-3.5 select-none shrink-0">
         
-        {/* Logo and tabs links */}
-        <div className="flex items-center gap-4 md:gap-8">
+        {/* Top row: Logo & text info on the left, Sync actions on the right */}
+        <div className="flex items-center justify-between gap-4 w-full">
+          {/* Logo */}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider">SEPA</div>
+            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs text-white shadow-inner select-none tracking-wider shrink-0">SEPA</div>
             <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-white">SEPA 股票篩選與買賣點分析系統</span>
+              <span className="font-bold text-sm tracking-tight text-white leading-tight">SEPA 股票篩選與買賣點分析系統</span>
               <span className="text-[10px] text-gray-500 font-mono tracking-wider leading-none">Minervini Trend Template Engine</span>
             </div>
           </div>
-          
-          <nav className="flex items-center bg-black/30 p-0.5 rounded-lg border border-[#30363D]">
+
+          {/* Sync panel actions (Always pinned on the right) */}
+          <div className="flex items-center gap-3.5 shrink-0">
+            <div className="text-right flex flex-col justify-center">
+              <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
+              <span className="text-xs font-mono text-[#8B949E] font-semibold block leading-tight">{lastUpdated || "等待同步中..."}</span>
+              {refreshing && syncMessage && (
+                <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
+              )}
+            </div>
+
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "掃描演算中..." : "重新掃描市場"}
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom row: Navigation tabs (Clean horizontal flow, no overflow clutter) */}
+        <div className="flex items-center overflow-x-auto pb-0.5 scrollbar-none select-none">
+          <nav className="flex items-center bg-black/30 p-0.5 rounded-lg border border-[#30363D] shrink-0">
             <button
               onClick={() => setActiveTab("tw")}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide transition-all ${
@@ -750,33 +774,13 @@ export default function App() {
             <button
               onClick={() => setActiveTab("settings")}
               className={`p-1.5 rounded-md text-xs transition-colors ${
-                activeTab === "settings" ? "bg-slate-800 text-indigo-400" : "text-[#8B949E] hover:text-white"
+                activeTab === "settings" ? "bg-slate-800 text-indigo-400" : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
               title="系統設定"
             >
               <Settings className="w-4 h-4" />
             </button>
           </nav>
-        </div>
-
-        {/* Sync panel actions */}
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:block text-right">
-            <span className="text-[9px] uppercase tracking-wider text-gray-500 font-bold block leading-tight">最後掃描更新</span>
-            <span className="text-xs font-mono text-[#8B949E] font-medium block leading-tight">{lastUpdated}</span>
-            {refreshing && syncMessage && (
-              <span className="text-[9px] text-indigo-400 animate-pulse font-medium block mt-0.5">● {syncMessage}</span>
-            )}
-          </div>
-
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-1.5 bg-[#238636] hover:bg-[#2eab47] active:scale-95 disabled:opacity-50 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-md select-none"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "掃描演算中..." : "重新掃描市場"}
-          </button>
         </div>
       </header>
 

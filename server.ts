@@ -1350,6 +1350,7 @@ async function performMarketSync(): Promise<boolean> {
   const priorityStocksList = twseStockList.filter(s => priorityTickers.includes(s.ticker));
   const remainingStocks = twseStockList.filter(s => !priorityTickers.includes(s.ticker));
  
+  let completedCount = 0;
   console.log(`[Market Sync] Real-time priority fetching for ${priorityStocksList.length} global leaders...`);
   for (const item of priorityStocksList) {
     let { klines } = await fetchStockKLines(item.ticker, true, item.name);
@@ -1371,6 +1372,11 @@ async function performMarketSync(): Promise<boolean> {
       const rsScore = (2 * getReturn(63)) + getReturn(126) + getReturn(189) + getReturn(252);
       rsScoreMap[item.ticker] = rsScore;
       finalTwList.push({ ...item, klines });
+    }
+
+    completedCount++;
+    if (marketDataCache) {
+      marketDataCache.lastUpdated = `同步中 (${completedCount}/${twseStockList.length})`;
     }
   }
 
@@ -1399,7 +1405,7 @@ async function performMarketSync(): Promise<boolean> {
     
     marketDataCache = {
       ...marketDataCache,
-      lastUpdated: `優先股同步完成 (掃描中...)`,
+      lastUpdated: `同步中 (${completedCount}/${twseStockList.length})`,
       taiex: taiexInfo || marketDataCache?.taiex || { price: 0, changePercent: 0, date: "" },
       nasdaq: nasdaqInfo || marketDataCache?.nasdaq || { price: 0, changePercent: 0, date: "" },
       twStocks: tempResults.filter(Boolean),
@@ -1440,6 +1446,11 @@ async function performMarketSync(): Promise<boolean> {
       rsScoreMap[item.ticker] = rsScore;
       finalTwList.push({ ...item, klines });
     }
+  }
+
+  completedCount += recycleList.length;
+  if (marketDataCache) {
+    marketDataCache.lastUpdated = `同步中 (${completedCount}/${twseStockList.length})`;
   }
 
   // 二、多併發批次掃描 scanList，每批 2 檔節能防堵
@@ -1485,10 +1496,14 @@ async function performMarketSync(): Promise<boolean> {
       }
     }));
 
-    // 背景同步進度通報
-    if (i % 20 === 0 && i > 0 && finalTwList.length > 5) {
-      console.log(`[Market Sync Progress] TW API scanning progress: ${i}/${totalSteps} stocks. Current valid: ${finalTwList.length}`);
-      
+    completedCount += chunk.length;
+
+    // 背景同步進度通報 - 每一輪都將最新進度推入快取，讓用戶秒級目睹進度攀升！
+    if (i % 20 === 0) {
+      console.log(`[Market Sync Progress] TW API scanning progress: ${i}/${totalSteps} stocks. Raw pool processed: ${completedCount}/${twseStockList.length}`);
+    }
+    
+    if (finalTwList.length > 5) {
       const currentRSKeys = Object.keys(rsScoreMap).sort((a, b) => rsScoreMap[a] - rsScoreMap[b]);
       const tempResults = finalTwList.map(s => {
         const rankIndex = currentRSKeys.indexOf(s.ticker);
@@ -1508,7 +1523,7 @@ async function performMarketSync(): Promise<boolean> {
       
       marketDataCache = {
         ...marketDataCache,
-        lastUpdated: `同步中 (${i}/${totalSteps})`,
+        lastUpdated: `同步中 (${Math.min(completedCount, twseStockList.length)}/${twseStockList.length})`,
         taiex: taiexInfo || { price: 0, changePercent: 0, date: "" },
         nasdaq: nasdaqInfo || { price: 0, changePercent: 0, date: "" },
         twStocks: tempResults.filter(Boolean),
