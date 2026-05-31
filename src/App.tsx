@@ -32,7 +32,8 @@ import {
   Bookmark,
   Activity,
   Ban,
-  Sparkles
+  Sparkles,
+  LogIn
 } from "lucide-react";
 import { StockAnalysis, SepaWeights, FilterSettings, LiquidityParameters } from "./types";
 import { DataProvider, DEFAULT_WEIGHTS } from "./services/DataProvider";
@@ -77,6 +78,7 @@ export default function AppWrapper() {
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const [token, setToken] = useState<string | undefined>();
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [activeTab, setActiveTab] = useState<"tw" | "us" | "single" | "watchlist" | "settings" | "industry">("watchlist");
 
   useEffect(() => {
@@ -177,7 +179,6 @@ function AppContent() {
     let pollInterval: any = null;
 
     const loadData = async (isForced = false) => {
-      if (!token) return;
       try {
         const result = await DataProvider.loadFromAPI(isForced, weights, token);
         if (active) {
@@ -223,7 +224,6 @@ function AppContent() {
     
     let active = true;
     const fetchK = async () => {
-      if (!token) return;
       setLoadingKlines(true);
       const k = await DataProvider.fetchKlines(selectedTicker, token);
       if (active) {
@@ -243,7 +243,6 @@ function AppContent() {
 
     let active = true;
     const loadFundamentals = async () => {
-      if (!token) return;
       setFundamentalLoading(true);
       try {
         const data = await DataProvider.fetchFundamentals(selectedTicker, token);
@@ -269,7 +268,11 @@ function AppContent() {
   }, []);
 
   const handleRefresh = async () => {
-    if (!token || refreshing) return;
+    if (refreshing) return;
+    if (!user) {
+        setShowLoginModal(true);
+        return;
+    }
     setRefreshing(true);
     setError(null);
     setSyncMessage("要求已送出，正在排隊執行掃描...");
@@ -695,12 +698,9 @@ function AppContent() {
     );
   }
 
-  if (!user || !token) {
-    return <LoginScreen />;
-  }
-
   return (
-    <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
+    <>
+      <div className="min-h-screen bg-[#0B0E14] text-[#E6EDF3] flex flex-col font-sans select-none antialiased">
       
       {/* Top Glassmorphism Navigation Bar */}
       <header className="sticky top-0 z-50 bg-[#161B22]/80 backdrop-blur-md border-b border-[#30363D] px-4 md:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
@@ -827,6 +827,39 @@ function AppContent() {
               </p>
             </div>
           )}
+          
+          {/* User Auth Status */}
+          <div className="flex flex-col gap-4">
+            {user ? (
+              <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
+                {user.photoURL ? (
+                  <img referrerPolicy="no-referrer" src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-full border border-indigo-500/30" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs">
+                    {user.displayName?.charAt(0) || user.email?.charAt(0) || "U"}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-bold text-gray-200 truncate">{user.displayName || user.email}</p>
+                  <button 
+                    onClick={handleLogout}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider"
+                  >
+                    登出帳號
+                  </button>
+                </div>
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowLoginModal(true)}
+                className="flex items-center justify-center gap-2 w-full p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg active:scale-[0.98]"
+              >
+                <LogIn className="w-4 h-4" />
+                登入以同步個人掃描
+              </button>
+            )}
+          </div>
           
           {/* Context Dynamic Filter panel */}
           {(activeTab === "tw" || activeTab === "us") && (
@@ -2521,7 +2554,16 @@ function AppContent() {
           Cluster: Cloud-Run-Prod-TW-1
         </div>
       </footer>
+      {showLoginModal && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLoginModal(false)}></div>
+          <div className="relative w-full max-w-md">
+            <LoginScreen isModal onClose={() => setShowLoginModal(false)} />
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 }
 

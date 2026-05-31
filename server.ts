@@ -43,6 +43,20 @@ async function authenticate(req: any, res: any, next: any) {
     }
 }
 
+async function optionalAuthenticate(req: any, res: any, next: any) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+        const idToken = authHeader.split("Bearer ")[1];
+        try {
+            const decodedToken = await admin.auth().verifyIdToken(idToken);
+            req.user = decodedToken;
+        } catch (error) {
+            console.warn("Optional Auth Error:", error);
+        }
+    }
+    next();
+}
+
 // Lazy-loaded model instance
 let ai: GoogleGenAI | null = null;
 function getGeminiClient() {
@@ -173,6 +187,10 @@ interface UserMarketState {
     globalSyncingFlag: boolean;
 }
 const userStates = new Map<string, UserMarketState>();
+const globalState: UserMarketState = {
+    marketDataCache: null,
+    globalSyncingFlag: false
+};
 
 function getUserState(uid: string): UserMarketState {
     if (!userStates.has(uid)) {
@@ -1278,7 +1296,7 @@ async function fetchStockKLines(ticker: string, isTW: boolean, name: string): Pr
 
 // Perform market sync across all TWSE listed stocks
 async function performMarketSync(uid?: string): Promise<boolean> {
-  const state = uid ? getUserState(uid) : { marketDataCache: null, globalSyncingFlag: false };
+  const state = uid ? getUserState(uid) : globalState;
   if (state.globalSyncingFlag) return false;
   state.globalSyncingFlag = true;
   
@@ -1699,7 +1717,14 @@ async function performMarketSync(uid?: string): Promise<boolean> {
     
     if (uid) {
         const cachePath = path.join(process.cwd(), `market_cache_${uid}.json`);
-        fs.writeFileSync(cachePath, JSON.stringify(state.marketDataCache, null, 2));
+        const tempPath = cachePath + ".tmp";
+        fs.writeFileSync(tempPath, JSON.stringify(state.marketDataCache, null, 2));
+        fs.renameSync(tempPath, cachePath);
+    } else {
+        const cachePath = path.join(process.cwd(), "market_cache.json");
+        const tempPath = cachePath + ".tmp";
+        fs.writeFileSync(tempPath, JSON.stringify(state.marketDataCache, null, 2));
+        fs.renameSync(tempPath, cachePath);
     }
     
     console.log(`[Market Sync Completed] User: ${uid || "Global"}. Last updated: ${formatTime}`);
@@ -1713,16 +1738,24 @@ async function performMarketSync(uid?: string): Promise<boolean> {
 }
 
 // REST route to deliver real market data
-app.get("/api/market-data", authenticate, async (req: any, res) => {
-  const uid = req.user.uid;
-  const state = getUserState(uid);
+app.get("/api/market-data", optionalAuthenticate, async (req: any, res) => {
+  const uid = req.user?.uid;
+  const state = uid ? getUserState(uid) : globalState;
   const force = req.query.force === "true";
   
   try {
     if (!state.marketDataCache) {
-       const cachePath = path.join(process.cwd(), `market_cache_${uid}.json`);
+       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
+       const cachePath = path.join(process.cwd(), cacheFileName);
        if (fs.existsSync(cachePath)) {
-           state.marketDataCache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+           try {
+               const data = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+               state.marketDataCache = data;
+           } catch (parseError) {
+               console.error(`[Cache Parse Error] Corrupted cache file: ${cacheFileName}`, parseError);
+               // If corrupted, delete it to allow fresh sync
+               try { fs.unlinkSync(cachePath); } catch (e) {}
+           }
        }
     }
     
@@ -1731,12 +1764,25 @@ app.get("/api/market-data", authenticate, async (req: any, res) => {
       return res.json({ ...state.marketDataCache, isBackgroundSyncing: state.globalSyncingFlag });
     }
     
+    // Guests cannot force rescan
+    if (force && !uid) {
+        return res.status(403).json({ error: "只有登入使用者可以執行手動掃描" });
+    }
+
     // Start full sync in background if needed
-    if (!state.globalSyncingFlag && (!state.marketDataCache || force)) {
+    if (force && uid && !state.globalSyncingFlag) {
       performMarketSync(uid).catch(err => {
         console.error(`[Background Sync Error] User: ${uid}`, err);
-        state.globalSyncingFlag = false;
+        if (getUserState(uid)) getUserState(uid).globalSyncingFlag = false;
       });
+    }
+
+    // Initial background sync for global if no cache exists
+    if (!state.marketDataCache && !state.globalSyncingFlag) {
+        performMarketSync(uid || undefined).catch(err => {
+            if (uid) getUserState(uid).globalSyncingFlag = false;
+            else globalSyncingFlag = false;
+        });
     }
     
     // Return what we have
@@ -1748,19 +1794,19 @@ app.get("/api/market-data", authenticate, async (req: any, res) => {
         twStocks: stripKlines(state.marketDataCache.twStocks || []),
         usStocks: stripKlines(state.marketDataCache.usStocks || []),
         isBackgroundSyncing: state.globalSyncingFlag,
-        message: state.globalSyncingFlag ? `個人掃描進度更新中...` : undefined
+        message: state.globalSyncingFlag ? `掃描進度更新中...` : undefined
       });
     } else {
       return res.json({ 
-        lastUpdated: "正在為您的帳號初始化數據...", 
+        lastUpdated: uid ? "正在為您的帳號初始化數據..." : "正在初始化數據...", 
         twStocks: [], 
         taiex: { price: 0, changePercent: 0, date: "" },
         isBackgroundSyncing: true,
-        message: "正在為您進行首次市場掃描，請稍後 1~2 分鐘。" 
+        message: uid ? "正在為您進行首次市場掃描，請稍後 1~2 分鐘。" : "系統偵測到尚無資料，正在從交易所獲取數據中..." 
       });
     }
   } catch (error: any) {
-    console.error(`[Market Data Sync Error] User: ${uid}`, error);
+    console.error(`[Market Data Sync Error] User: ${uid || "Guest"}`, error);
     res.status(500).json({ error: "市場資料解析失敗" });
   }
 });
@@ -1952,9 +1998,9 @@ app.get("/api/industry-mapping", (req, res) => {
     res.json(industryMapping);
 });
 
-app.get("/api/stock-list-simple", authenticate, (req: any, res) => {
-    const uid = req.user.uid;
-    const state = getUserState(uid);
+app.get("/api/stock-list-simple", optionalAuthenticate, (req: any, res) => {
+    const uid = req.user?.uid;
+    const state = uid ? getUserState(uid) : globalState;
     if (!state.marketDataCache) return res.json([]);
     const list = [...state.marketDataCache.twStocks, ...state.marketDataCache.usStocks].map((s: any) => ({
         ticker: s.ticker,
@@ -1963,13 +2009,14 @@ app.get("/api/stock-list-simple", authenticate, (req: any, res) => {
     res.json(list);
 });
 
-app.get("/api/fundamentals/:ticker", authenticate, async (req: any, res) => {
-  const uid = req.user.uid;
-  const state = getUserState(uid);
+app.get("/api/fundamentals/:ticker", optionalAuthenticate, async (req: any, res) => {
+  const uid = req.user?.uid;
+  const state = uid ? getUserState(uid) : globalState;
   try {
     const { ticker } = req.params;
     if (!state.marketDataCache) {
-       const cachePath = path.join(process.cwd(), `market_cache_${uid}.json`);
+       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
+       const cachePath = path.join(process.cwd(), cacheFileName);
        if (fs.existsSync(cachePath)) {
            state.marketDataCache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
        }
@@ -2094,13 +2141,14 @@ app.get("/api/fundamentals/:ticker", authenticate, async (req: any, res) => {
   }
 });
 
-app.get("/api/stock-klines/:ticker", authenticate, async (req: any, res) => {
-  const uid = req.user.uid;
-  const state = getUserState(uid);
+app.get("/api/stock-klines/:ticker", optionalAuthenticate, async (req: any, res) => {
+  const uid = req.user?.uid;
+  const state = uid ? getUserState(uid) : globalState;
   try {
     const { ticker } = req.params;
     if (!state.marketDataCache) {
-       const cachePath = path.join(process.cwd(), `market_cache_${uid}.json`);
+       const cacheFileName = uid ? `market_cache_${uid}.json` : "market_cache.json";
+       const cachePath = path.join(process.cwd(), cacheFileName);
        if (fs.existsSync(cachePath)) {
            state.marketDataCache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
        }
