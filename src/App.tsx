@@ -724,7 +724,7 @@ function AppContent() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              台股 59LiHi Top 20
+              台股 Top 20
             </button>
             <button
               onClick={() => setActiveTab("us")}
@@ -734,7 +734,7 @@ function AppContent() {
                   : "text-[#8B949E] hover:text-[#E6EDF3]"
               }`}
             >
-              美股 59LiHi Top 20
+              美股 Top 20
             </button>
             <button
               onClick={() => setActiveTab("watchlist")}
@@ -745,7 +745,7 @@ function AppContent() {
               }`}
             >
               <ClipboardList className="w-3.5 h-3.5 text-indigo-400" />
-              <span>59LiHi 觀察池</span>
+              <span>觀察池</span>
             </button>
             <button
               onClick={() => setActiveTab("single")}
@@ -1134,7 +1134,7 @@ function AppContent() {
                 <div className="space-y-1">
                   <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
                     <Globe2 className="w-4 h-4 text-emerald-500" />
-                    今日上市股 59LiHi Top 20 領先股
+                    今日上市股 Top 20 領先股
                   </h2>
                   <p className="text-[11px] text-gray-400">
                     基於 Mark Minervini 經典 SEPA 趨勢模型演算法，根據即時數據篩選出符合特徵的前 20 名台股強勢領先股。
